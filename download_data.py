@@ -1,7 +1,6 @@
 from pathlib import Path
-from sqlalchemy import create_engine
-import GPT.compute_high_growth_score_SP500_GPT as fin
 from GPT.Compute_Trend_score_SP500_GPT import Update_DB
+from Gemini import Compute_growth_score_sp500 as gem
 ROOT = Path(__file__).resolve().parent
 PRICE_DB = ROOT / "SP500_price_data.db"
 FIN_DB = ROOT / "SP500_finance_data.db"
@@ -12,17 +11,24 @@ def download_price_data(db_path: Path = PRICE_DB):
 
 
 def download_finance_data(db_path: Path = FIN_DB):
-    """Download financial statements for all S&P 500 stocks into *db_path*."""
-    # Lazily initialize the finance module on first use
-    if fin.CFG is None:
-        fin.initialize()
+    """Download financial statements for all S&P 500 stocks into *db_path* using
+    the Gemini finance module."""
 
-    # override target DB before calling download_all
-    fin.DB_PATH = Path(db_path)
-    fin.CFG["database"]["db_name"] = str(db_path)
-    fin.engine = create_engine(f"sqlite:///{db_path}")
-    fin.load_sp500_meta()
-    fin.download_all()
+    config = gem.load_config()
+    data_cfg = config.setdefault("Data", {})
+    data_cfg["db_name"] = str(db_path)
+
+    conn = gem.create_db_connection(str(db_path))
+    if not conn:
+        raise RuntimeError("Failed to connect to finance database")
+    gem.create_tables(conn)
+
+    url = config.get("General", {}).get("sp500_list_url")
+    tickers = list(gem.get_sp500_tickers_and_industries(url).keys())
+    for ticker in tickers:
+        gem.download_data_for_ticker(ticker, config, conn)
+
+    conn.close()
 
 
 def main():
