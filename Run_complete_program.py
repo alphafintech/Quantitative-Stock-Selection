@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-主执行脚本 (run.py)
+主执行脚本 (Run_complete_program.py)
 
 功能:
 1. 解析命令行参数以控制 S&P 500 处理流程 (Gemini 和/或 GPT 部分)。
@@ -11,30 +11,30 @@
 命令行用法示例:
 # --- Gemini 流程 ---
 - 运行完整 Gemini 流程:
-  python run.py
+  python Run_complete_program.py
 - 跳过 Gemini 趋势数据更新:
-  python run.py --skip-Gemini-trend-data-update
+  python Run_complete_program.py --skip-Gemini-trend-data-update
 - 跳过 Gemini 增长数据更新:
-  python run.py --skip-Gemini-growth-data-update
+  python Run_complete_program.py --skip-Gemini-growth-data-update
 - 跳过 Gemini 最终筛选:
-  python run.py --skip-Gemini-screening
+  python Run_complete_program.py --skip-Gemini-screening
 - 完全跳过 Gemini 流程:
-  python run.py --skip-Gemini
+  python Run_complete_program.py --skip-Gemini
 
 # --- GPT 流程 ---
 - 运行完整 GPT 流程 (默认执行):
-  python run.py
+  python Run_complete_program.py
 - 跳过 GPT 流程:
-  python run.py --skip-GPT
+  python Run_complete_program.py --skip-GPT
 - 运行 GPT 流程，但跳过趋势数据库更新:
-  python run.py --skip-GPT-trend-db-update
+  python Run_complete_program.py --skip-GPT-trend-db-update
 - 运行 GPT 流程，但跳过财务数据库更新:
-  python run.py --skip-GPT-finance-db-update
+  python Run_complete_program.py --skip-GPT-finance-db-update
 - 运行 GPT 流程，跳过所有数据库更新:
-  python run.py --skip-GPT-trend-db-update --skip-GPT-finance-db-update
+  python Run_complete_program.py --skip-GPT-trend-db-update --skip-GPT-finance-db-update
 
 # --- 同时运行 (示例: 跳过 Gemini) ---
-  python run.py --skip-Gemini
+  python Run_complete_program.py --skip-Gemini
 """
 
 import argparse
