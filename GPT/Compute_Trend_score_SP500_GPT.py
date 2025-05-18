@@ -15,7 +15,11 @@ import pandas as pd
 import requests
 import yfinance as yf
 import time
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover - tqdm optional
+    def tqdm(iterable=None, **kwargs):
+        return iterable if iterable is not None else []
 
 
 ROOT = Path(__file__).resolve().parent

@@ -51,13 +51,22 @@ from .Compute_Trend_score_SP500_GPT import (
     run_process_control as trend_run_ctrl,
     sync_from_common_db as trend_sync,
 )
-from .compute_high_growth_score_SP500_GPT import (
-    sync_from_common_db as finance_sync,
-    compute_metrics as FIN_METRICS,
-    calc_scores as FIN_SCORES,
-    export_excel as FIN_EXPORT,
-    initialize as FIN_INIT,
-)
+try:
+    from .compute_high_growth_score_SP500_GPT import (
+        sync_from_common_db as finance_sync,
+        compute_metrics as FIN_METRICS,
+        calc_scores as FIN_SCORES,
+        export_excel as FIN_EXPORT,
+        initialize as FIN_INIT,
+    )
+except ImportError:
+    from .compute_high_growth_score_SP500_GPT import (
+        sync_from_common_db as finance_sync,
+        compute_metrics as FIN_METRICS,
+        calc_scores as FIN_SCORES,
+        export_excel as FIN_EXPORT,
+    )
+    FIN_INIT = lambda *a, **k: None
 
 # ------------------------------------------------------------
 # logging

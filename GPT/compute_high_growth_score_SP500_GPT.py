@@ -24,7 +24,11 @@ SLEEP_SEC = 0.2      # pause between retries to avoid Yahoo rate‑limit
 BATCH_PAUSE = 0.1     # seconds to sleep between ticker downloads
 from sqlalchemy import create_engine, text
 import sqlalchemy
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover - tqdm optional
+    def tqdm(iterable=None, **kwargs):
+        return iterable if iterable is not None else []
 
 
 # ══════════════════ CONFIG ═══════════════════════════════════
