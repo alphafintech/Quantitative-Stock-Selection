@@ -18,6 +18,7 @@ import argparse
 import configparser
 import logging
 import os
+from pathlib import Path
 import sqlite3
 import time
 from datetime import date
@@ -43,6 +44,7 @@ except ImportError:
 
 # --- 全局配置占位符 ---
 # 将由 load_configuration() 函数填充
+BASE_DIR = Path(__file__).resolve().parent
 CONFIG = {}
 
 
@@ -136,6 +138,8 @@ def load_configuration(config_file='config.ini'):
     # Database
     db_conf = CONFIG.setdefault('database', {})
     db_conf['db_file'] = db_conf.get('db_file', 'sp500_data.db')
+    if not os.path.isabs(db_conf['db_file']):
+        db_conf['db_file'] = str(BASE_DIR / db_conf['db_file'])
     db_conf['main_table'] = db_conf.get('main_table', 'stock_data')
     db_conf['latest_analysis_table'] = db_conf.get('latest_analysis_table', 'latest_analysis')
 

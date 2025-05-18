@@ -18,8 +18,9 @@ import time
 from tqdm import tqdm
 
 
-db_file = "sp500_data_GPT.db"
-config_file = "config_trend.ini"
+ROOT = Path(__file__).resolve().parent
+db_file = ROOT / "sp500_data_GPT.db"
+config_file = ROOT / "config_trend.ini"
 
 
 # ----------------- Configuration ----------------- #
@@ -60,7 +61,7 @@ def read_config(config_file="config.ini"):
     return start_date, end_date
 
 # ----------------- Database Setup ----------------- #
-def init_db(db_file="sp500_data.db"):
+def init_db(db_file: str | Path = db_file):
     """
     Initialize (or connect to) the local SQLite database and create the required table if it does not exist.
     Returns the connection and cursor.
@@ -284,7 +285,7 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
         print(f"No new data to insert for {ticker}.")
 
 # ----------------- Main Execution ----------------- #
-def Update_DB(db_file):
+def Update_DB(db_file: Path | str = db_file):
     # Read configuration.
     config_start, config_end = read_config(config_file)
 
@@ -343,9 +344,10 @@ def Update_DB(db_file):
     conn.close()
     print("\nUpdate complete. The local database now contains continuous historical data for all S&P 500 stocks.")
 
-def sync_from_common_db(src_db: str, dest_db: str = db_file) -> None:
+def sync_from_common_db(src_db: str, dest_db: Path | str = db_file) -> None:
     """Replace local DB with a copy of *src_db*."""
-    with sqlite3.connect(src_db) as s, sqlite3.connect(dest_db) as d:
+    dst = Path(dest_db)
+    with sqlite3.connect(src_db) as s, sqlite3.connect(dst) as d:
         s.backup(d)
 
 

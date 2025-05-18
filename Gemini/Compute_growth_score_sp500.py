@@ -20,6 +20,7 @@ warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning, mes
 
 from pathlib import Path
 CONFIG_FILE = Path(__file__).with_name("config_finance.ini")
+BASE_DIR = Path(__file__).resolve().parent
 
 LOG_FORMAT = '%(asctime)s - %(levelname)s - [Growth] %(message)s' # 日志格式，添加模块前缀
 
@@ -274,6 +275,8 @@ def create_db_connection(db_file):
     """创建到 SQLite 数据库的连接。"""
     conn = None
     try:
+        if not os.path.isabs(db_file):
+            db_file = str(BASE_DIR / db_file)
         db_dir = os.path.dirname(db_file)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir)
@@ -1209,6 +1212,8 @@ def compute_growth_score(update_data=True):
     conn = None
     try:
         db_name = data_cfg.get('db_name', 'S&P500_finance_data.db')
+        if not os.path.isabs(db_name):
+            db_name = str(BASE_DIR / db_name)
         conn = create_db_connection(db_name)
         if not conn:
             logging.critical("Failed to establish database connection. Exiting.")
