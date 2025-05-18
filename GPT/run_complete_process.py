@@ -47,7 +47,7 @@ CFG_FINANCE  = ROOT / "config_finance.ini"
 # ------------------------------------------------------------
 # 依赖脚本函数导入
 # ------------------------------------------------------------
-from .Compute_Trend_socre_SP500_GPT import run_process_control as trend_run_ctrl
+from .Compute_Trend_score_SP500_GPT import run_process_control as trend_run_ctrl
 from .compute_high_growth_score_SP500_GPT import (
     download_all as FIN_DOWNLOAD,
     compute_metrics as FIN_METRICS,
