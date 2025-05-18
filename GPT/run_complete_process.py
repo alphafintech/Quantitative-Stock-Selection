@@ -56,15 +56,21 @@ from .compute_high_growth_score_SP500_GPT import (
     compute_metrics as FIN_METRICS,
     calc_scores as FIN_SCORES,
     export_excel as FIN_EXPORT,
+    initialize as FIN_INIT,
 )
 
 # ------------------------------------------------------------
 # logging
 # ------------------------------------------------------------
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(message)s",
-                    handlers=[logging.StreamHandler(sys.stdout)])
 log = logging.getLogger("orchestrator")
+
+def setup_logging() -> None:
+    if not log.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
 
 # ------------------------------------------------------------
 # 辅助：找出最新文件
@@ -140,6 +146,7 @@ def build_trend_scores(update_db: bool, recalc_scores: bool) -> None:
 
 
 def build_finance_scores(update_db: bool, recalc_scores: bool) -> None:
+    FIN_INIT()
     if update_db:
         log.info("[Finance] syncing from common DB …")
         finance_sync("../SP500_finance_data.db")
@@ -233,6 +240,7 @@ def run_pipeline(*,
                  recalc_scores: bool = True,
                  do_selection: bool = True,
                  cfg_run: Path = CFG_RUN) -> None:
+    setup_logging()
     start = dt.datetime.now()
     log.info("========== PIPELINE START ==========")
 
@@ -267,6 +275,7 @@ def test_pipeline():
 # ------------------------------------------------------------
 #if __name__ == "__main__":
 def main():
+    setup_logging()
     import argparse
     p = argparse.ArgumentParser(description="S&P500 Trend + Fundamental orchestrator")
     p.add_argument("--cfg", default=str(CFG_RUN), help="path to config_run.ini")
@@ -281,3 +290,6 @@ def main():
                  recalc_scores=args.recalc,
                  do_selection=args.select,
                  cfg_run=Path(args.cfg))
+
+if __name__ == "__main__":
+    main()
