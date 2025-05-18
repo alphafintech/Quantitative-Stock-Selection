@@ -172,6 +172,19 @@ def initialize() -> None:
     QSEQ_W = CFG.getfloat("combo_weights", "qseq", fallback=0.6)
     _COMBO_DENOM = FY_W + QSEQ_W if FY_W + QSEQ_W else 1.0
 
+    # --- scoring parameters --------------------------------------------------
+    global WINSOR_MIN, WINSOR_MAX, PCT_SCOPE, MIN_INDUSTRY_SIZE, WEIGHTS
+    WINSOR_MIN = CFG.getfloat("metric_parameters", "winsor_min", fallback=WINSOR_MIN)
+    WINSOR_MAX = CFG.getfloat("metric_parameters", "winsor_max", fallback=WINSOR_MAX)
+    PCT_SCOPE = CFG["metric_parameters"].get("percentile_scope", PCT_SCOPE)
+    MIN_INDUSTRY_SIZE = CFG.getint(
+        "metric_parameters", "min_industry_size", fallback=MIN_INDUSTRY_SIZE
+    )
+    WEIGHTS = {
+        k: CFG.getfloat("weights", k, fallback=WEIGHTS.get(k, 0))
+        for k in ["growth", "quality", "efficiency", "safety", "valuation"]
+    }
+
 def sync_from_common_db(src_db: str) -> None:
     """Copy raw data from a shared database into the local one."""
     global engine
@@ -571,13 +584,21 @@ def compute_metrics() -> pd.DataFrame:
 #   Part 2 —— Scoring / Export / main
 # ──────────────────────────────────────────────────────────────
 # ---------- 评分参数 ----------
-WINSOR_MIN = CFG.getfloat("metric_parameters","winsor_min",fallback=0.05)
-WINSOR_MAX = CFG.getfloat("metric_parameters","winsor_max",fallback=0.95)
-PCT_SCOPE  = CFG["metric_parameters"].get("percentile_scope","industry")
-MIN_INDUSTRY_SIZE = CFG.getint("metric_parameters", "min_industry_size", fallback=5)
+# Default values are loaded here so the module can be imported without
+# immediately reading the configuration file.  They are overwritten with
+# values from ``config_finance.ini`` when :func:`initialize` is called.
+WINSOR_MIN = 0.05
+WINSOR_MAX = 0.95
+PCT_SCOPE  = "industry"
+MIN_INDUSTRY_SIZE = 5
 
-WEIGHTS = {k:CFG.getfloat("weights",k) for k in
-           ["growth","quality","efficiency","safety","valuation"]}
+WEIGHTS = {
+    "growth": 0.45,
+    "quality": 0.20,
+    "efficiency": 0.10,
+    "safety": 0.15,
+    "valuation": 0.10,
+}
 
 DIM_MAP = {
     "growth_fy"  : ["fy_rev_y","fy_eps_y","fy_fcf_y","fy_margin_delta"],
