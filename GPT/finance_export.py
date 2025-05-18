@@ -82,6 +82,3 @@ def export_ticker_financials_to_excel(ticker: str,
     return out_path
 
 
-# ========= 使用示例 =========
-if __name__ == "__main__":
-    export_ticker_financials_to_excel("PLTR")   # 生成 NVDA_financials.xlsx
