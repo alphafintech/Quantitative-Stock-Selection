@@ -15,6 +15,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 import time
+from tqdm import tqdm
 
 
 db_file = "sp500_data_GPT.db"
@@ -230,9 +231,9 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
         try:
             # Use the full history if the config start date is the default "1900-01-01".
             if config_start == '1900-01-01':
-                df = yf.download(ticker, period="max", progress=False)
+                df = yf.download(ticker, period="max", progress=True)
             else:
-                df = yf.download(ticker, start=config_start, end=config_end, progress=False)
+                df = yf.download(ticker, start=config_start, end=config_end, progress=True)
         except Exception as e:
             print(f"Error downloading data for {ticker}: {e}")
             return
@@ -254,7 +255,7 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
             backfill_end = (existing_min_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
             print(f"Backfilling for {ticker} from {backfill_start} to {backfill_end}.")
             try:
-                df_backfill = yf.download(ticker, start=backfill_start, end=backfill_end, progress=False)
+                df_backfill = yf.download(ticker, start=backfill_start, end=backfill_end, progress=True)
                 if not df_backfill.empty:
                     new_data = pd.concat([new_data, df_backfill])
                 else:
@@ -267,7 +268,7 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
             incremental_start = (existing_max_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
             print(f"Incremental update for {ticker} from {incremental_start} to {config_end}.")
             try:
-                df_update = yf.download(ticker, start=incremental_start, end=config_end, progress=False)
+                df_update = yf.download(ticker, start=incremental_start, end=config_end, progress=True)
                 if not df_update.empty:
                     new_data = pd.concat([new_data, df_update])
                 else:
@@ -304,7 +305,7 @@ def Update_DB(db_file):
     # ----------------- BATCH DOWNLOAD ----------------- #
     BATCH = 50  # 每批 50 支股票，可按需调大/调小
 
-    for i in range(0, len(tickers), BATCH):
+    for i in tqdm(range(0, len(tickers), BATCH), desc="Downloading price data"):
         batch = tickers[i:i + BATCH]
 
         # 1) 统一下载
@@ -313,7 +314,7 @@ def Update_DB(db_file):
                                 start=config_start,
                                 end=config_end,
                                 group_by="ticker",
-                                progress=False,
+                                progress=True,
                                 threads=False)  # 避免多线程触发限流
         except Exception as e:
             print(f"[BatchDownload] error on batch {batch[0]}…{batch[-1]}: {e}")
@@ -322,7 +323,7 @@ def Update_DB(db_file):
                                 start=config_start,
                                 end=config_end,
                                 group_by="ticker",
-                                progress=False,
+                                progress=True,
                                 threads=False)
 
         # 2) 拆分并写入 DB
