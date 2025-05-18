@@ -1,6 +1,7 @@
 from pathlib import Path
 from GPT.Compute_Trend_score_SP500_GPT import Update_DB
 from Gemini import Compute_growth_score_sp500 as gem
+from tqdm import tqdm
 ROOT = Path(__file__).resolve().parent
 PRICE_DB = ROOT / "SP500_price_data.db"
 FIN_DB = ROOT / "SP500_finance_data.db"
@@ -25,7 +26,7 @@ def download_finance_data(db_path: Path = FIN_DB):
 
     url = config.get("General", {}).get("sp500_list_url")
     tickers = list(gem.get_sp500_tickers_and_industries(url).keys())
-    for ticker in tickers:
+    for ticker in tqdm(tickers, desc="Finance data"):
         gem.download_data_for_ticker(ticker, config, conn)
 
     conn.close()

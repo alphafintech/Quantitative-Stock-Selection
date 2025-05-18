@@ -19,6 +19,7 @@ sys.modules.setdefault(
 for name in ["download_all", "compute_metrics", "calc_scores", "export_excel"]:
     setattr(sys.modules["GPT.compute_high_growth_score_SP500_GPT"], name, lambda *a, **k: None)
 sys.modules["GPT.compute_high_growth_score_SP500_GPT"].sync_from_common_db = lambda *a, **k: None
+sys.modules["GPT.compute_high_growth_score_SP500_GPT"].initialize = lambda *a, **k: None
 
 from GPT.run_complete_process import _load_sel_cfg, _SEL_DEFAULTS
 
