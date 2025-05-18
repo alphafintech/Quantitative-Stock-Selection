@@ -85,6 +85,7 @@ def ensure_config() -> configparser.ConfigParser:
         print("[INFO] Missing keys added to config")
     return cfg
 
+BASE_DIR = Path(__file__).resolve().parent
 CFG = ensure_config()
 
 # ═══════════════ LOGGING ═════════════════════════════════════
@@ -94,7 +95,7 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("sp500-growth")
 
 # ═════════════ GLOBAL PARAMS ═════════════════════════════════
-DB_PATH  = Path(CFG["database"]["db_name"])
+DB_PATH  = BASE_DIR / CFG["database"]["db_name"]
 engine   = create_engine(f"sqlite:///{DB_PATH}")
 START_DATE = pd.to_datetime(CFG["data"]["start_date"])
 END_DATE   = pd.to_datetime(CFG["data"].get("end_date")) if CFG["data"].get("end_date") else pd.Timestamp.today()
