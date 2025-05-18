@@ -1,0 +1,11 @@
+pandas
+numpy
+yfinance
+pandas-ta
+requests
+beautifulsoup4
+lxml
+openpyxl
+sqlalchemy
+tqdm
+scipy
