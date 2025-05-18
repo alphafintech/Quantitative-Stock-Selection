@@ -6,6 +6,10 @@
 #  • 两套分数按权重融合 → growth_score
 #  • 质量 / 效率 / 安全 / 估值维持原先逻辑
 # ──────────────────────────────────────────────────────────────
+"""Compute fundamental growth scores for the S&P 500.
+
+The list of tickers is fetched lazily on first use via :func:`load_sp500_meta`.
+"""
 from __future__ import annotations
 import configparser, datetime as dt, logging, sqlite3, sys, re
 from pathlib import Path
@@ -117,14 +121,28 @@ RAW_COLS = [
 
 # ═════════════ S&P 500 元数据 ════════════════════════════════
 def get_sp500_tickers() -> pd.DataFrame:
-    df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", header=0)[0]
+    df = pd.read_html(
+        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", header=0
+    )[0]
     df["Symbol"] = df["Symbol"].str.replace(".", "-", regex=False)
-    return df.rename(columns={"Symbol":"ticker","Security":"company",
-                              "GICS Sector":"sector","GICS Sub-Industry":"industry"})[
-                              ["ticker","company","sector","industry"]]
+    return df.rename(
+        columns={
+            "Symbol": "ticker",
+            "Security": "company",
+            "GICS Sector": "sector",
+            "GICS Sub-Industry": "industry",
+        }
+    )[["ticker", "company", "sector", "industry"]]
 
-SP500_META = get_sp500_tickers()
-logger.info("Loaded %d S&P 500 tickers", len(SP500_META))
+SP500_META: pd.DataFrame | None = None
+
+def load_sp500_meta() -> pd.DataFrame:
+    """Return the S&P 500 metadata, loading it on first use."""
+    global SP500_META
+    if SP500_META is None:
+        SP500_META = get_sp500_tickers()
+        logger.info("Loaded %d S&P 500 tickers", len(SP500_META))
+    return SP500_META
 
 def sync_from_common_db(src_db: str) -> None:
     """Copy raw data from a shared database into the local one."""
@@ -331,8 +349,9 @@ def download_all():
             RAW_TABLE, conn, if_exists="replace", index=False
         )
 
+    meta = load_sp500_meta()
     fails = []
-    for row in tqdm(SP500_META.itertuples(), total=len(SP500_META), desc="Downloading"):
+    for row in tqdm(meta.itertuples(), total=len(meta), desc="Downloading"):
         try:
             save_raw_to_db(row.ticker, download_single_ticker(row.ticker))
         except Exception as exc:
@@ -514,7 +533,8 @@ def compute_metrics() -> pd.DataFrame:
             "peg": peg, "fcf_yield": fcf_yield,
         })
 
-    dfm = pd.DataFrame(records).merge(SP500_META, on="ticker", how="left")
+    meta = load_sp500_meta()
+    dfm = pd.DataFrame(records).merge(meta, on="ticker", how="left")
     dfm.to_sql(METRICS_TABLE, sqlite3.connect(DB_PATH), if_exists="replace", index=False)
     logger.info("Computed metrics for %d companies", len(dfm))
     return dfm
