@@ -5,10 +5,12 @@ import sys, types
 # Stub heavy dependencies so we can import run_complete_process without
 # requiring optional packages like pandas.
 sys.modules.setdefault(
-    "GPT.Compute_Trend_socre_SP500_GPT",
-    types.ModuleType("GPT.Compute_Trend_socre_SP500_GPT"),
+    "GPT.Compute_Trend_score_SP500_GPT",
+    types.ModuleType("GPT.Compute_Trend_score_SP500_GPT"),
 )
-sys.modules["GPT.Compute_Trend_socre_SP500_GPT"].run_process_control = lambda *a, **k: None
+stub_trend = sys.modules["GPT.Compute_Trend_score_SP500_GPT"]
+stub_trend.run_process_control = lambda *a, **k: None
+stub_trend.sync_from_common_db = lambda *a, **k: None
 
 sys.modules.setdefault(
     "GPT.compute_high_growth_score_SP500_GPT",
@@ -16,6 +18,7 @@ sys.modules.setdefault(
 )
 for name in ["download_all", "compute_metrics", "calc_scores", "export_excel"]:
     setattr(sys.modules["GPT.compute_high_growth_score_SP500_GPT"], name, lambda *a, **k: None)
+sys.modules["GPT.compute_high_growth_score_SP500_GPT"].sync_from_common_db = lambda *a, **k: None
 
 from GPT.run_complete_process import _load_sel_cfg, _SEL_DEFAULTS
 

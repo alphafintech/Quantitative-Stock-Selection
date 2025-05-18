@@ -9,7 +9,10 @@ import os
 import configparser
 import sqlite3
 import datetime
+from pathlib import Path
+from urllib.error import URLError
 import pandas as pd
+import requests
 import yfinance as yf
 import time
 
@@ -82,17 +85,33 @@ def init_db(db_file="sp500_data.db"):
 
 # ----------------- Retrieve S&P 500 Tickers ----------------- #
 def get_sp500_tickers():
+    """Retrieve the list of S&P 500 tickers.
+
+    The function first attempts to scrape the ticker table from Wikipedia.  If
+    that fails due to a network issue or parsing error, it falls back to loading
+    a local static file ``sp500_tickers.txt`` located next to this module.  When
+    both methods fail an empty list is returned.
     """
-    Retrieves the current list of S&P 500 tickers by scraping the Wikipedia page.
-    Adjusts ticker symbols if necessary (e.g., changing '.' to '-' for Yahoo Finance compatibility).
-    Returns a list of ticker symbols.
-    """
+
     print("Retrieving S&P 500 tickers from Wikipedia...")
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    tables = pd.read_html(url)
-    df = tables[0]
+    try:
+        tables = pd.read_html(url)
+        df = tables[0]
+    except (requests.exceptions.RequestException, URLError, ValueError) as e:
+        print(f"Failed to retrieve tickers from Wikipedia: {e}")
+        fallback = Path(__file__).with_name("sp500_tickers.txt")
+        if fallback.exists():
+            print(f"Loading tickers from fallback file {fallback}.")
+            tickers = [line.strip() for line in fallback.read_text().splitlines() if line.strip()]
+            tickers = [t.replace('.', '-') for t in tickers]
+            if "SPY" not in tickers:
+                tickers.append("SPY")
+            return tickers
+        else:
+            print("No fallback ticker file available. Returning empty list.")
+            return []
     tickers = df['Symbol'].tolist()
-    # Adjust tickers: replace '.' with '-' for Yahoo Finance compatibility.
     tickers = [ticker.replace('.', '-') for ticker in tickers]
     print(f"Retrieved {len(tickers)} ticker symbols.")
     tickers.append("SPY")   # 用于 RS 计算
@@ -273,6 +292,10 @@ def Update_DB(db_file):
 
     # Retrieve S&P 500 tickers.
     tickers = get_sp500_tickers()
+    if not tickers:
+        print("No tickers available; aborting update.")
+        conn.close()
+        return
 
     # # Process each ticker one by one.
     # for ticker in tickers:
