@@ -98,29 +98,19 @@ _SEL_DEFAULTS: Dict[str, Any] = {
 }
 
 def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
-    cfg = configparser.ConfigParser()
-    cfg.read(cfg_path)
-    sel = {k: v for k, v in _SEL_DEFAULTS.items()}  # clone
-    if cfg.has_section("selection"):
-        s = cfg["selection"]
-        for k in sel:
-            if k in s and s[k]:
-                if k in ("w_core", "w_growth"):
-                    sel[k] = float(s[k])
-                elif k.endswith("_thresh"):
-                    sel[k] = int(s[k])
-                else:
-                    sel[k] = s[k]
-    return sel
+    """Read `[selection]` from *cfg_path* and merge with ``_SEL_DEFAULTS``.
 
-def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
+    Empty values in the config file will not override the defaults.
+    """
+
     cfg = configparser.ConfigParser()
     cfg.read(cfg_path)
-    sel = {k: v for k, v in _SEL_DEFAULTS.items()}  # clone
+
+    sel = {k: v for k, v in _SEL_DEFAULTS.items()}  # clone defaults
     if cfg.has_section("selection"):
         s = cfg["selection"]
         for k in sel:
-            if k in s:
+            if k in s and s[k]:  # ignore blank values
                 if k.startswith("w_"):
                     sel[k] = float(s[k])
                 elif k.endswith("_thresh"):
