@@ -6,6 +6,10 @@
 #  • 两套分数按权重融合 → growth_score
 #  • 质量 / 效率 / 安全 / 估值维持原先逻辑
 # ──────────────────────────────────────────────────────────────
+"""Compute fundamental growth scores for the S&P 500.
+
+The list of tickers is fetched lazily on first use via :func:`load_sp500_meta`.
+"""
 from __future__ import annotations
 import configparser, datetime as dt, logging, sqlite3, sys, re
 from pathlib import Path
@@ -81,26 +85,22 @@ def ensure_config() -> configparser.ConfigParser:
         print("[INFO] Missing keys added to config")
     return cfg
 
-CFG = ensure_config()
+BASE_DIR = Path(__file__).resolve().parent
+CFG = None
 
 # ═══════════════ LOGGING ═════════════════════════════════════
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(message)s",
-                    handlers=[logging.StreamHandler(sys.stdout)])
 logger = logging.getLogger("sp500-growth")
 
 # ═════════════ GLOBAL PARAMS ═════════════════════════════════
-DB_PATH  = Path(CFG["database"]["db_name"])
-engine   = create_engine(f"sqlite:///{DB_PATH}")
-START_DATE = pd.to_datetime(CFG["data"]["start_date"])
-END_DATE   = pd.to_datetime(CFG["data"].get("end_date")) if CFG["data"].get("end_date") else pd.Timestamp.today()
-FY_YEARS = CFG.getint("metric_parameters", "fy_years", fallback=2)
-FY_CALC  = CFG["metric_parameters"].get("fy_calc", "average").lower()
-UPDATE_MODE = CFG["data"]["update_mode"].lower()
+DB_PATH = None
+engine = None
+START_DATE = END_DATE = None
+FY_YEARS = None
+FY_CALC = None
+UPDATE_MODE = None
 
-FY_W   = CFG.getfloat("combo_weights", "fy",   fallback=0.4)
-QSEQ_W = CFG.getfloat("combo_weights", "qseq", fallback=0.6)
-_COMBO_DENOM = FY_W + QSEQ_W if FY_W + QSEQ_W else 1.0
+FY_W = QSEQ_W = None
+_COMBO_DENOM = None
 
 RAW_TABLE, METRICS_TABLE, SCORES_TABLE = "raw_financials", "derived_metrics", "scores"
  
@@ -117,14 +117,60 @@ RAW_COLS = [
 
 # ═════════════ S&P 500 元数据 ════════════════════════════════
 def get_sp500_tickers() -> pd.DataFrame:
-    df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", header=0)[0]
+    df = pd.read_html(
+        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", header=0
+    )[0]
     df["Symbol"] = df["Symbol"].str.replace(".", "-", regex=False)
-    return df.rename(columns={"Symbol":"ticker","Security":"company",
-                              "GICS Sector":"sector","GICS Sub-Industry":"industry"})[
-                              ["ticker","company","sector","industry"]]
+    return df.rename(
+        columns={
+            "Symbol": "ticker",
+            "Security": "company",
+            "GICS Sector": "sector",
+            "GICS Sub-Industry": "industry",
+        }
+    )[["ticker", "company", "sector", "industry"]]
 
-SP500_META = get_sp500_tickers()
-logger.info("Loaded %d S&P 500 tickers", len(SP500_META))
+SP500_META: pd.DataFrame | None = None
+
+def load_sp500_meta() -> pd.DataFrame:
+    """Return the S&P 500 metadata, loading it on first use."""
+    global SP500_META
+    if SP500_META is None:
+        SP500_META = get_sp500_tickers()
+        logger.info("Loaded %d S&P 500 tickers", len(SP500_META))
+    return SP500_META
+
+def initialize() -> None:
+    """Initialize configuration, logging and global parameters."""
+    global CFG, DB_PATH, engine, START_DATE, END_DATE, FY_YEARS, FY_CALC
+    global UPDATE_MODE, FY_W, QSEQ_W, _COMBO_DENOM
+
+    if CFG is not None:
+        return  # already initialized
+
+    CFG = ensure_config()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    DB_PATH = BASE_DIR / CFG["database"]["db_name"]
+    engine = create_engine(f"sqlite:///{DB_PATH}")
+    START_DATE = pd.to_datetime(CFG["data"]["start_date"])
+    END_DATE = (
+        pd.to_datetime(CFG["data"].get("end_date"))
+        if CFG["data"].get("end_date")
+        else pd.Timestamp.today()
+    )
+    FY_YEARS = CFG.getint("metric_parameters", "fy_years", fallback=2)
+    FY_CALC = CFG["metric_parameters"].get("fy_calc", "average").lower()
+    UPDATE_MODE = CFG["data"]["update_mode"].lower()
+
+    FY_W = CFG.getfloat("combo_weights", "fy", fallback=0.4)
+    QSEQ_W = CFG.getfloat("combo_weights", "qseq", fallback=0.6)
+    _COMBO_DENOM = FY_W + QSEQ_W if FY_W + QSEQ_W else 1.0
 
 def sync_from_common_db(src_db: str) -> None:
     """Copy raw data from a shared database into the local one."""
@@ -331,8 +377,9 @@ def download_all():
             RAW_TABLE, conn, if_exists="replace", index=False
         )
 
+    meta = load_sp500_meta()
     fails = []
-    for row in tqdm(SP500_META.itertuples(), total=len(SP500_META), desc="Downloading"):
+    for row in tqdm(meta.itertuples(), total=len(meta), desc="Downloading"):
         try:
             save_raw_to_db(row.ticker, download_single_ticker(row.ticker))
         except Exception as exc:
@@ -514,7 +561,8 @@ def compute_metrics() -> pd.DataFrame:
             "peg": peg, "fcf_yield": fcf_yield,
         })
 
-    dfm = pd.DataFrame(records).merge(SP500_META, on="ticker", how="left")
+    meta = load_sp500_meta()
+    dfm = pd.DataFrame(records).merge(meta, on="ticker", how="left")
     dfm.to_sql(METRICS_TABLE, sqlite3.connect(DB_PATH), if_exists="replace", index=False)
     logger.info("Computed metrics for %d companies", len(dfm))
     return dfm
@@ -670,6 +718,7 @@ def Testmain():
     export_excel(scores)
 
 if __name__ == "__main__":
+    initialize()
     Testmain()
 
 
