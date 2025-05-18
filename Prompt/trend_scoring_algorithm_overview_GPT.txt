@@ -1,0 +1,61 @@
+BJECTIVE  
+Measure the short- to medium-term price momentum of every S&P 500 stock and output a 0-to-100 **Trend Score**.  The score blends ten technical signals that cover price structure, momentum, relative strength and volume confirmation, then ranks all tickers from strongest to weakest.
+
+I. CORE METRICS AND HOW EACH IS CALCULATED  
+
+Daily OHLCV data come from Yahoo Finance and are stored in SQLite; every metric below is refreshed each evening.
+
+1. **Moving-average structure** – checks whether the 10-, 20-, 50- and 150-day simple moving averages (SMAs) are in strict bullish order (10 > 20 > 50 > 150).  
+   • Score: 0 / 33 / 67 / 100 depending on how many of the three upward gaps are in place.
+
+2. **50-day SMA slope** – linear-regression slope of the 50-day SMA over the last 20 trading days, divided by the current 50-day SMA to express it as a unit-free percentage.  
+   • The result is mapped so a steep positive slope approaches 100 and a steep negative slope approaches 0.
+
+3. **ADX (14-day)** – Average Directional Index taken straight from price highs, lows and closes.  
+   • ADX of 15 or below scores 0; ADX 40 or above scores 100; linear in between.
+
+4. **Rate-of-Change (ROC)** – 20-day percentage change in the closing price.  
+   • 0 % is worth 50 points; +20 % maps to 100; –20 % maps to 0.
+
+5. **RSI (14-day)** – Relative Strength Index.  
+   • The closer RSI is to the neutral 50 line, the higher the score (peaks and troughs are penalised).
+
+6. **MACD histogram slope** – regression slope of the MACD histogram over the last 20 days, normalised by the histogram’s own standard deviation.
+
+7. **Relative strength versus the S&P 500** – excess return of the stock over SPY during the past 63 trading days.  
+   • +20 % excess return scores 100; –20 % scores 0.
+
+8. **OBV slope** – regression slope of On-Balance Volume over the last 20 days, again normalised by its standard deviation.
+
+9. **Distance to 52-week high** – percentage the latest close sits below the one-year high.  
+   • At the high (0 %) the score is 100; 20 % below the high scores 0.
+
+10. **Volume surge ratio** – 20-day average volume divided by the 120-day average.  
+    • The base-10 logarithm of the ratio is scaled so a clear pickup in turnover moves the score toward 100.
+
+II. SCORING AND RANKING PROCESS  
+
+1. **Data update**  
+   • Prices and volumes are pulled or back-filled only for dates missing in the database (incremental update).  
+   • Moving averages, MACD, RSI, Bollinger Bands, volume averages, Stochastic %K/%D and OBV are recomputed for every ticker.  
+   • Additional one-off series—ADX, 52-week high/low and 20-day ROC—are stored alongside daily data.
+
+2. **Raw-to-score mapping**  
+   • Each raw metric is transformed onto a 0-to-100 scale using the mapping rules listed under “Core Metrics”.  
+   • Outliers are clipped so all scores stay between 0 and 100.
+
+3. **Weighting**  
+   Default weights (editable in *config_trend.ini*; they normalise to 100):  
+   * Moving-average structure 15  
+   * 50-day SMA slope 10  
+   * ADX 15  
+   * ROC 10  
+   * RSI 5  
+   * MACD-histogram slope 10  
+   * Relative strength 10  
+   * OBV slope 10  
+   * Distance to 52-week high 10  
+   * Volume surge ratio 5  
+
+4. **Trend Score**  
+   • Multiply each metric score by its weight, sum the results and divide by 100.

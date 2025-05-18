@@ -1,0 +1,55 @@
+OBJECTIVE  
+Evaluate every S&P 500 company on five dimensions—Growth, Quality, Efficiency, Safety, and Valuation—then combine them into a single Total Score (0-100) and a star rating.
+
+I. CORE METRICS AND HOW EACH IS CALCULATED  
+
+Growth metrics are measured two ways:  
+• “FY” looks at the last two annual reports and averages the year-over-year percentage changes.  
+• “Q-Seq” looks at the last four quarters and averages the quarter-over-quarter percentage changes.  
+If a value changes from zero or negative to positive, its growth rate is set at plus one hundred percent.
+
+A. GROWTH  
+1. Revenue growth – percentage change in total revenue.  
+2. EPS growth – percentage change in diluted EPS (if EPS is missing, use net income divided by shares outstanding).  
+3. Free-cash-flow growth – percentage change in free cash flow, where free cash flow equals operating cash flow minus capital expenditures.  
+4. Gross-margin change – change in gross profit as a proportion of revenue.  
+(The FY and Q-Seq scores for each of these four items are later blended 40 % FY, 60 % Q-Seq.)
+
+B. QUALITY  
+5. ROIC – operating income after an assumed 21 % tax charge divided by invested capital.  
+6. ROE – net income divided by shareholders’ equity.
+
+C. EFFICIENCY  
+7. Operating-cash-flow ratio – operating cash flow divided by revenue.  
+8. Asset-turnover ratio – revenue divided by total assets.
+
+D. SAFETY  
+9. Net debt to EBITDA – total debt minus cash, then divided by EBITDA.  
+10. Interest-coverage ratio – operating income divided by the absolute value of interest expense.  
+11. Current ratio – current assets divided by current liabilities.
+
+E. VALUATION  
+12. PEG – share price divided by forward EPS, then divided by the EPS growth rate (calculated only when EPS growth is positive).  
+13. Free-cash-flow yield – free cash flow divided by market capitalisation (share price times shares outstanding).
+
+II. SCORING AND RANKING PROCESS  
+
+1.  Download financial statements and prices, store them in SQLite, and compute the thirteen metrics above.
+
+2.  Handle gaps and outliers  
+    • Any missing figure is filled with the median figure for the same industry; if the industry has fewer than five companies, use the market-wide median instead.  
+    • Extreme values beyond the 5th and 95th percentiles are pulled back to those limits.
+
+3.  Convert raw numbers to 0-to-100 scores  
+    • Rank each metric within its industry and express the ranking as a percentile.  
+    • For “lower-is-better” items (Net debt / EBITDA and PEG) subtract the percentile from one hundred so that higher is always better.
+
+4.  Blend growth items  
+    • For each of the four growth items, blend its FY score and Q-Seq score using forty percent FY and sixty percent Q-Seq.
+
+5.  Build each pillar score  
+    • Growth score = 50 % revenue + 30 % EPS + 10 % free cash flow + 10 % gross margin (all using the blended values).  
+    • Quality, Efficiency, Safety, Valuation scores are simple averages of their own sub-metrics.
+
+6.  Total Score  
+    Total Score = 45 % Growth + 20 % Quality + 10 % Efficiency + 15 % Safety + 10 % Valuation.

@@ -1,0 +1,75 @@
+
+A normalized composite trend-score algorithm has been developed  to rank S&P 500 constituents by the current strength and direction of their price trends. 
+
+Concurrently, a normalized composite fundamental-growth score algorithm has been developed to rank S&P 500 constituents by their growth potential and quality.
+
+
+Applying these two screening algorithms, we have selected the following stocks, listed as "Ticker: (Trend Score, Fundamental Score, Final Score)":<ticker_list>. 
+
+My current portfolio includes the following holdings, displayed as "Ticker: (Cost Basis, Share Count, Stop-Loss %, Take-Profit %)": <Holdings_list>.
+
+
+Step 1 – Sentiment Analysis
+For each stock listed above—including both the screened selections and the current portfolio holdings—conduct a comprehensive search and analysis of all news articles and social media discussions (e.g., on X, formerly Twitter) published between <start_date> and <end_date>.
+You can prioritize sentiment sources from official news outlets, X (formerly Twitter), earnings transcripts, and major financial news websites like Bloomberg, Reuters, CNBC, Wall street Journal and Seeking Alpha. You should focus on U.S.-based sentiment.
+	•	Evaluate sentiment (positive, negative, or neutral) and coverage volume for every ticker, accounting for industry-specific factors such as sector trends, regulatory changes, and supply-chain dynamics.
+	•	Integrate insights from the most recent earnings calls (up to <end_date>) to gauge management’s outlook on growth sustainability, revenue trajectories, and profitability, prioritizing stocks that exhibit consistent growth patterns and optimistic commentary suitable for a trend-based strategy.
+	•	Assign each stock a sentiment score from 0 to 10 (10 = strongest positive sentiment and engagement; 0 = strongest negative).
+	•	Provide a concise summary of sentiment trends for each stock, highlighting key events, recurring phrases, and the ways macroeconomic or industry factors shape perceptions.
+
+
+
+Step 2 – Macroeconomic and Market Context
+
+Analyze recent macroeconomic variables—including U.S. monetary policy (Federal Reserve’s interest rate decisions, forward guidance), inflation trends, GDP growth, tariffs, and other relevant economic policies—based on information published between <start_date> and <end_date>. Prioritize official sources (e.g., Federal Reserve statements, Bureau of Economic Analysis reports, U.S. Treasury announcements) and major financial news websites (e.g., Bloomberg, Reuters, CNBC, WSJ).
+
+Examine contemporaneous trends in the S&P 500 and Nasdaq Composite indices within the same time frame. Clearly synthesize these findings into a concise summary outlining the current macroeconomic environment, market sentiment, and outlook, specifically highlighting how recent U.S. monetary policy and macroeconomic shifts could impact equity market conditions in the near term.
+
+
+
+Step 3 – Portfolio Adjustment and Rationale
+Based on the latest fundamental, sentiment, and technical analyses of both my existing holdings and the screened stock selections—together with the current macroeconomic climate and market conditions as of <end_date>—recommend adjustments to optimize my portfolio.
+Specifically:
+* Retrieve the latest market price for each stock currently held, and calculate total assets by summing the market value of all existing holdings (latest price × number of shares) along with the current cash balance.
+* Construct an optimized portfolio by selecting stocks exclusively from the combined set of my current holdings and the screened stocks.
+* Limit the optimized portfolio to between <mini_num_stocks> and <maxi_num_stocks> positions, including cash if justified.
+* Ensure the total portfolio weights sum to exactly 100%.
+* Given the anticipated holding period of <investment_horizon> days, select positions expected to deliver favorable returns within this timeframe.
+* When optimizing the portfolio, explicitly consider the current market prices, my original cost basis, and the predefined take-profit and stop-loss levels for each existing holding. Carefully evaluate whether the current market price is favorable before selling any stock. Similarly, thoroughly assess if the current market price presents a suitable buying opportunity when adding to existing positions or initiating new ones.
+
+
+For each recommended stock or cash allocation, provide:
+	1.	Rationale for selection. Clearly explain the reasoning behind choosing each stock or maintaining cash.
+	2.	Determine the investment allocation and provide the rationale, along with a specific trading strategy:
+First, based on the current total assets, decide how much capital to allocate to the stock in question, and explain the reasoning behind this allocation.
+Then, outline a specific trading strategy:
+	•	If the stock is already in the portfolio, determine whether to increase or reduce the position based on the newly allocated capital.
+	•	For an increase in position, calculate how many additional shares to buy based on the latest stock price.
+	•	For a reduction in position, calculate how many shares to sell based on the latest stock price.
+	•	If this is a new position, determine how many shares to buy based on the current stock price.
+	3.	Define the exit strategy for the stock:
+First, identify the stock’s latest price. Then, based on the current entry price, set a stop-loss level by specifying a percentage below the entry price and calculate the exact stop-loss price.
+Also, set a take-profit level by specifying a percentage above the entry price and calculate the take-profit price.
+The exit strategy should be informed by recent price levels, key technical support/resistance zones, or the stock’s volatility.
+	4.	A concise justification summarizing strengths derived from:
+	•	(a) Fundamental factors (e.g., earnings growth, valuation metrics).
+	•	(b) Sentiment factors (e.g., investor perception, social-media buzz).
+	•	(c) Technical factors (e.g., momentum, key support/resistance levels).
+
+step 4 - Present your recommended stock and cash positions separately using both table and text formats:
+- Table Format:
+Clearly indicate the allocation percentage for each recommended stock, along with the latest stock price, and the specific number of shares to buy or sell. Additionally, include explicitly defined stop-loss and take-profit strategies, both expressed as percentages relative to the entry price. These strategies should be informed by recent price volatility, as well as key technical support and resistance levels.
+
+
+- Text Format:
+Provide a concise and clear presentation of each recommendation in a single line, using the following structure:
+Ticker:Weight,Shares (e.g., AAPL:15%,100)
+This format specifies the position size as a percentage of total capital, along with the number of shares currently held or to be transacted.
+
+
+Requirements:
+
+You must fully complete all the specified analysis steps. Ensure that your investment recommendations align accurately with market dynamics and conditions as of `<end_date>`, aiming to enhance overall portfolio performance.
+
+
+Finally, prepare your complete and structured analysis report in Chinese, ensuring it is logically organized, clearly articulated, and readily actionable for investment decision-making purposes.
