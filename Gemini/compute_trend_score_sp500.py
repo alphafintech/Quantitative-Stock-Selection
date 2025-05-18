@@ -72,6 +72,11 @@ def create_connection(db_file):
         logging.error(f"连接数据库 '{db_file}' 时出错: {e}", exc_info=True)
     return conn
 
+def sync_from_common_db(src_db: str, dest_db: str) -> None:
+    """Replace *dest_db* with a copy of *src_db*."""
+    with sqlite3.connect(src_db) as s, sqlite3.connect(dest_db) as d:
+        s.backup(d)
+
 
 # --- Configuration Loading (UPDATED for Trend Score Weights) ---
 def load_configuration(config_file='config.ini'):
