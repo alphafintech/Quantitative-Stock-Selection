@@ -126,6 +126,16 @@ def get_sp500_tickers() -> pd.DataFrame:
 SP500_META = get_sp500_tickers()
 logger.info("Loaded %d S&P 500 tickers", len(SP500_META))
 
+def sync_from_common_db(src_db: str) -> None:
+    """Copy raw data from a shared database into the local one."""
+    global engine
+    src = Path(src_db)
+    dst = DB_PATH
+    with sqlite3.connect(src) as s, sqlite3.connect(dst) as d:
+        s.backup(d)
+    engine.dispose()
+    engine = create_engine(f"sqlite:///{dst}")
+
 def latest_report_date_in_db(ticker:str):
     try:
         with engine.connect() as conn:

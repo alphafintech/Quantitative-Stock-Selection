@@ -3,12 +3,18 @@
 主执行脚本 (Run_complete_program.py)
 
 功能:
-1. 解析命令行参数以控制 S&P 500 处理流程 (Gemini 和/或 GPT 部分)。
-2. 调用 Gemini/run_sp500_processing.py 中的 main_pipeline 函数 (如果需要)。
-3. 调用 GPT/run_complete_process.py 中的 run_pipeline 函数 (如果需要)。
-4. 允许用户选择性地跳过数据更新或筛选步骤。
+1. 解析命令行参数以控制公共数据下载及两套处理流程 (Gemini/GPT)。
+2. 如未显式跳过，则首先执行 download_data.py 更新共享数据库。
+3. 调用 Gemini/run_sp500_processing.py 中的 main_pipeline 函数 (如果需要)。
+4. 调用 GPT/run_complete_process.py 中的 run_pipeline 函数 (如果需要)。
+5. 允许用户选择性地跳过各步骤。
 
 命令行用法示例:
+# --- 公共数据下载 ---
+- 运行前先下载(默认):
+  python Run_complete_program.py
+- 跳过下载(使用已有 SP500_price_data.db / SP500_finance_data.db):
+  python Run_complete_program.py --skip-download
 # --- Gemini 流程 ---
 - 运行完整 Gemini 流程:
   python Run_complete_program.py
@@ -47,6 +53,7 @@ import pandas as pd
 from pathlib import Path
 import configparser
 import datetime as dt
+import download_data
 
 # --- 配置日志记录 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MainRunner] %(message)s')
@@ -130,6 +137,14 @@ def run_main_process():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
+    # 公共数据下载控制参数
+    download_group = parser.add_argument_group('Common Data Download')
+    download_group.add_argument(
+        '--skip-download',
+        action='store_true',
+        help='跳过共享价格和财务数据下载步骤。'
+    )
+
     # Gemini 控制参数
     gemini_group = parser.add_argument_group('Gemini Pipeline Control (默认执行, 除非 --skip-Gemini)')
     gemini_group.add_argument(
@@ -172,6 +187,15 @@ def run_main_process():
     )
 
     args = parser.parse_args()
+
+    # --- 公共数据库下载 ---
+    if not args.skip_download:
+        logging.info("--- 更新共享数据库 ---")
+        try:
+            download_data.download_price_data()
+            download_data.download_finance_data()
+        except Exception as exc:
+            logging.error(f"下载共享数据时出错: {exc}", exc_info=True)
 
     # --- 执行 Gemini 流程 (如果可用且未被跳过) ---
     if GEMINI_AVAILABLE and not args.skip_Gemini:

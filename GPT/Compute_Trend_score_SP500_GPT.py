@@ -319,6 +319,11 @@ def Update_DB(db_file):
     conn.close()
     print("\nUpdate complete. The local database now contains continuous historical data for all S&P 500 stocks.")
 
+def sync_from_common_db(src_db: str, dest_db: str = db_file) -> None:
+    """Replace local DB with a copy of *src_db*."""
+    with sqlite3.connect(src_db) as s, sqlite3.connect(dest_db) as d:
+        s.backup(d)
+
 
 # ----------------- Calculate and Store Moving Averages ----------------- #
 def calculate_and_store_moving_averages(db_path):
