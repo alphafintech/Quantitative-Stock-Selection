@@ -13,6 +13,10 @@ def download_price_data(db_path: Path = PRICE_DB):
 
 def download_finance_data(db_path: Path = FIN_DB):
     """Download financial statements for all S&P 500 stocks into *db_path*."""
+    # Lazily initialize the finance module on first use
+    if fin.CFG is None:
+        fin.initialize()
+
     # override target DB before calling download_all
     fin.DB_PATH = Path(db_path)
     fin.CFG["database"]["db_name"] = str(db_path)
