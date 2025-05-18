@@ -17,6 +17,7 @@ def download_finance_data(db_path: Path = FIN_DB):
     fin.DB_PATH = Path(db_path)
     fin.CFG["database"]["db_name"] = str(db_path)
     fin.engine = create_engine(f"sqlite:///{db_path}")
+    fin.load_sp500_meta()
     fin.download_all()
 
 
