@@ -47,9 +47,12 @@ CFG_FINANCE  = ROOT / "config_finance.ini"
 # ------------------------------------------------------------
 # 依赖脚本函数导入
 # ------------------------------------------------------------
-from .Compute_Trend_score_SP500_GPT import run_process_control as trend_run_ctrl
+from .Compute_Trend_score_SP500_GPT import (
+    run_process_control as trend_run_ctrl,
+    sync_from_common_db as trend_sync,
+)
 from .compute_high_growth_score_SP500_GPT import (
-    download_all as FIN_DOWNLOAD,
+    sync_from_common_db as finance_sync,
     compute_metrics as FIN_METRICS,
     calc_scores as FIN_SCORES,
     export_excel as FIN_EXPORT,
@@ -124,28 +127,28 @@ def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
 # ------------------------------------------------------------
 
 def build_trend_scores(update_db: bool, recalc_scores: bool) -> None:
-    stage = None
     if update_db:
-        stage = 0
+        log.info("[Trend] syncing from common DB …")
+        trend_sync("../SP500_price_data.db")
+        trend_run_ctrl(2)
+        trend_run_ctrl(3)
     elif recalc_scores:
-        stage = 3
-    if stage is not None:
-        log.info("[Trend] run_process_control(stage=%d)", stage)
-        trend_run_ctrl(stage)
+        log.info("[Trend] recomputing trend scores …")
+        trend_run_ctrl(3)
     else:
         log.info("[Trend] skipped")
 
 
 def build_finance_scores(update_db: bool, recalc_scores: bool) -> None:
     if update_db:
-        log.info("[Finance] refreshing DB …")
-        FIN_DOWNLOAD()
-    if recalc_scores:
+        log.info("[Finance] syncing from common DB …")
+        finance_sync("../SP500_finance_data.db")
+    if recalc_scores or update_db:
         log.info("[Finance] recomputing scores …")
         metrics = FIN_METRICS()
-        scores  = FIN_SCORES(metrics)
+        scores = FIN_SCORES(metrics)
         FIN_EXPORT(scores)
-    if not (update_db or recalc_scores):
+    else:
         log.info("[Finance] skipped")
 
 

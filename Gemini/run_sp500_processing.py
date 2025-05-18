@@ -25,7 +25,7 @@ try:
         load_configuration as load_trend_config, # Rename to avoid conflict
         create_connection,
         create_tables,
-        update_stock_data,
+        sync_from_common_db,
         calculate_all_indicators,
         calculate_and_save_trend_scores,
         CONFIG as TREND_CONFIG # Import the config dict used by trend functions
@@ -279,15 +279,12 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
         # --- Step 4: Data Update ---
         if do_update_data:
             step_start = time.time()
-            logging.info("--- Running Data Update ---")
-            print("--- Running Data Update ---")
-            update_success = update_stock_data(conn) # Call imported function
-            if not update_success:
-                logging.warning("Data update step reported potential issues.")
-                # Decide if this is critical
-                # pipeline_successful = False
-            logging.info(f"--- Data Update finished (Duration: {time.time() - step_start:.2f}s) ---")
-            print(f"--- Data Update finished (Duration: {time.time() - step_start:.2f}s) ---")
+            logging.info("--- Syncing Data from common DB ---")
+            print("--- Syncing Data from common DB ---")
+            src = BASE_DIR.parent / "SP500_price_data.db"
+            sync_from_common_db(str(src), TREND_CONFIG['database']['db_file'])
+            logging.info(f"--- Data Sync finished (Duration: {time.time() - step_start:.2f}s) ---")
+            print(f"--- Data Sync finished (Duration: {time.time() - step_start:.2f}s) ---")
         else:
             logging.info("--- Skipping Data Update ---")
             print("--- Skipping Data Update ---")
