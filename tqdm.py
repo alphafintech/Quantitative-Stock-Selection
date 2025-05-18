@@ -1,5 +1,6 @@
 """Minimal tqdm stub used for progress display when the real package is unavailable."""
 from typing import Iterable, Iterator, Optional, Any
+import logging
 
 def tqdm(iterable: Iterable, *args: Any, **kwargs: Any) -> Iterator:
     """A very small subset of tqdm that simply yields the given iterable."""
@@ -12,9 +13,9 @@ def tqdm(iterable: Iterable, *args: Any, **kwargs: Any) -> Iterator:
             total = None
     for i, item in enumerate(iterable, 1):
         if total:
-            print(f"{desc} {i}/{total}", end="\r", flush=True)
+            logging.info(f"{desc} {i}/{total}")
         yield item
     if total:
-        print()
+        logging.info(f"{desc} {total}/{total}")
     else:
         pass
