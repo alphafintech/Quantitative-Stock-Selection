@@ -86,26 +86,21 @@ def ensure_config() -> configparser.ConfigParser:
     return cfg
 
 BASE_DIR = Path(__file__).resolve().parent
-CFG = ensure_config()
+CFG = None
 
 # ═══════════════ LOGGING ═════════════════════════════════════
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(message)s",
-                    handlers=[logging.StreamHandler(sys.stdout)])
 logger = logging.getLogger("sp500-growth")
 
 # ═════════════ GLOBAL PARAMS ═════════════════════════════════
-DB_PATH  = BASE_DIR / CFG["database"]["db_name"]
-engine   = create_engine(f"sqlite:///{DB_PATH}")
-START_DATE = pd.to_datetime(CFG["data"]["start_date"])
-END_DATE   = pd.to_datetime(CFG["data"].get("end_date")) if CFG["data"].get("end_date") else pd.Timestamp.today()
-FY_YEARS = CFG.getint("metric_parameters", "fy_years", fallback=2)
-FY_CALC  = CFG["metric_parameters"].get("fy_calc", "average").lower()
-UPDATE_MODE = CFG["data"]["update_mode"].lower()
+DB_PATH = None
+engine = None
+START_DATE = END_DATE = None
+FY_YEARS = None
+FY_CALC = None
+UPDATE_MODE = None
 
-FY_W   = CFG.getfloat("combo_weights", "fy",   fallback=0.4)
-QSEQ_W = CFG.getfloat("combo_weights", "qseq", fallback=0.6)
-_COMBO_DENOM = FY_W + QSEQ_W if FY_W + QSEQ_W else 1.0
+FY_W = QSEQ_W = None
+_COMBO_DENOM = None
 
 RAW_TABLE, METRICS_TABLE, SCORES_TABLE = "raw_financials", "derived_metrics", "scores"
  
@@ -144,6 +139,38 @@ def load_sp500_meta() -> pd.DataFrame:
         SP500_META = get_sp500_tickers()
         logger.info("Loaded %d S&P 500 tickers", len(SP500_META))
     return SP500_META
+
+def initialize() -> None:
+    """Initialize configuration, logging and global parameters."""
+    global CFG, DB_PATH, engine, START_DATE, END_DATE, FY_YEARS, FY_CALC
+    global UPDATE_MODE, FY_W, QSEQ_W, _COMBO_DENOM
+
+    if CFG is not None:
+        return  # already initialized
+
+    CFG = ensure_config()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    DB_PATH = BASE_DIR / CFG["database"]["db_name"]
+    engine = create_engine(f"sqlite:///{DB_PATH}")
+    START_DATE = pd.to_datetime(CFG["data"]["start_date"])
+    END_DATE = (
+        pd.to_datetime(CFG["data"].get("end_date"))
+        if CFG["data"].get("end_date")
+        else pd.Timestamp.today()
+    )
+    FY_YEARS = CFG.getint("metric_parameters", "fy_years", fallback=2)
+    FY_CALC = CFG["metric_parameters"].get("fy_calc", "average").lower()
+    UPDATE_MODE = CFG["data"]["update_mode"].lower()
+
+    FY_W = CFG.getfloat("combo_weights", "fy", fallback=0.4)
+    QSEQ_W = CFG.getfloat("combo_weights", "qseq", fallback=0.6)
+    _COMBO_DENOM = FY_W + QSEQ_W if FY_W + QSEQ_W else 1.0
 
 def sync_from_common_db(src_db: str) -> None:
     """Copy raw data from a shared database into the local one."""
@@ -691,6 +718,7 @@ def Testmain():
     export_excel(scores)
 
 if __name__ == "__main__":
+    initialize()
     Testmain()
 
 
