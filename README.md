@@ -15,6 +15,20 @@ Scripts that download or process data will automatically use these settings.
 
 All configuration files and helper scripts expect the finance database to be named `SP500_finance_data.db`.
 
+### Initializing the databases
+
+The pipeline relies on two SQLite databases (price and finance). Before you
+skip the download phases, ensure these databases contain data. On the first run,
+invoke the main script with the update flags enabled so that both databases are
+populated:
+
+```bash
+python Run_complete_program.py --update-price-data --update-finance-data
+```
+
+After this initial download you can run the script without the update flags and
+use `--skip-Gemini` or `--skip-GPT` as needed.
+
 ### Working Directory
 
 Pipeline scripts such as `Run_complete_program.py` expect to be executed
