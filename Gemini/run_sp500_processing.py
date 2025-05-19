@@ -555,11 +555,14 @@ def main_pipeline(run_trend_data_update=True, run_growth_data_update=True, run_f
     if overall_success:
         print("\nSTEP 2: Computing Growth Score...")
         try:
-            # Call the imported function, passing the control parameter
-            # *** Requires modification of compute_growth_score in its own file ***
-            compute_growth_score(update_data=run_growth_data_update)
-            growth_success = True # Assume success if no exception
-            print(f"Growth score computation function executed (Update Data = {run_growth_data_update}).")
+            # Call the imported function and capture success status
+            growth_success = compute_growth_score(update_data=run_growth_data_update)
+            print(
+                f"Growth score computation function executed (Update Data = {run_growth_data_update})."
+            )
+            if not growth_success:
+                print("Growth score computation reported failure.")
+                overall_success = False
         except TypeError as te:
              # Catch error if compute_growth_score hasn't been modified yet
              if 'update_data' in str(te):

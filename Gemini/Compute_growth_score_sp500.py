@@ -1142,7 +1142,7 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
     except (FileNotFoundError, ValueError, RuntimeError, KeyError) as e:
         print(f"CRITICAL CONFIGURATION ERROR: {e}")
         logging.critical(f"CRITICAL CONFIGURATION ERROR: {e}", exc_info=True)
-        return
+        return False
 
     data_cfg = config.get('Data', {})
     inc_download = data_cfg.get('incremental_download', True)
@@ -1154,7 +1154,7 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
         conn = create_db_connection(db_name)
         if not conn:
             logging.critical("Failed to establish database connection. Exiting.")
-            return
+            return False
         create_tables(conn)
 
         # Delete old data if full update requested
@@ -1169,13 +1169,15 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
                     logging.info(f"Cleared tables in {db_name} for full reload.")
                 except (sqlite3.Error, PermissionError) as e:
                     logging.error(f"Failed to clear tables in {db_name}: {e}")
-                    if conn: conn.close()
-                    return # Stop if clearing fails
+                    if conn:
+                        conn.close()
+                    return False  # Stop if clearing fails
 
     except (KeyError, OSError, sqlite3.Error) as e:
          logging.critical(f"Database setup/clearing error: {e}. Exiting.")
-         if conn: conn.close()
-         return
+         if conn:
+             conn.close()
+         return False
 
     # --- Get Tickers and Industries ---
     tickers_industries_dict = {}
@@ -1195,8 +1197,9 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
             logging.debug(f"Industry data fetched. Example:\n{industry_df.head().to_string()}")
     except (KeyError, ValueError, requests.exceptions.RequestException) as e:
         logging.critical(f"Error getting ticker list/URL: {e}. Exiting.")
-        if conn: conn.close()
-        return
+        if conn:
+            conn.close()
+        return False
 
     # --- Data Download Phase (Conditional) ---
     if update_data:
@@ -1225,8 +1228,9 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
 
     if annual_df.empty and quarterly_df.empty:
         logging.error("Failed to fetch ANY data from database. Cannot proceed with scoring. Exiting.")
-        if conn: conn.close()
-        return
+        if conn:
+            conn.close()
+        return False
     elif annual_df.empty:
         logging.warning("Annual data DataFrame is empty after fetching from DB.")
     elif quarterly_df.empty:
@@ -1238,8 +1242,9 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
 
     if not isinstance(indicator_df, pd.DataFrame) or indicator_df.empty:
         logging.error("Indicator calculation returned an empty or invalid DataFrame. Exiting.")
-        if conn: conn.close()
-        return
+        if conn:
+            conn.close()
+        return False
     if 'ticker' not in indicator_df.columns:
         # If calculate_indicators returns ticker as index, reset it here
         if indicator_df.index.name == 'ticker':
@@ -1247,8 +1252,9 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
              logging.debug("Reset index 'ticker' to column in indicator_df.")
         else:
              logging.error("Indicator DataFrame is missing 'ticker' column/index after calculation. Exiting.")
-             if conn: conn.close()
-             return
+             if conn:
+                 conn.close()
+             return False
 
     # Ensure ticker column is string type for reliable merging BEFORE merge
     indicator_df['ticker'] = indicator_df['ticker'].astype(str)
@@ -1346,6 +1352,7 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
 
     run_end_time = time.time()
     logging.info(f"--- Growth Score Script Finished --- Duration: {run_end_time - run_start_time:.2f} seconds ---")
+    return True
 
 # --- Entry Point ---
 if __name__ == "__main__":
