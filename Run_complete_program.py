@@ -288,7 +288,10 @@ def generate_prompt_Gemini() -> str:
         excel_path = script_dir / "Gemini" / "results" / screened_path
 
     if not excel_path.exists():
-        raise FileNotFoundError(f"未找到 Gemini 筛选结果文件: {excel_path}")
+        logging.warning(
+            f"[Gemini Prompt] 筛选结果文件不存在，跳过生成: {excel_path}"
+        )
+        return ""
 
     # 2) 读取 Excel
     df_dual  = pd.read_excel(excel_path, sheet_name="Dual_Threshold_Filter")
