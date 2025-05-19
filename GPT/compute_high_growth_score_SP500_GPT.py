@@ -31,7 +31,7 @@ end_date   =
 update_mode = incremental          ; incremental / full
 
 [database]
-db_name = sp500_finance.db
+db_name = SP500_finance_data.db
 
 [weights]           ; Σ=1
 growth     = 0.45
@@ -299,41 +299,8 @@ def save_raw_to_db(ticker: str, batches):
             out.to_sql(RAW_TABLE, conn, if_exists="append", index=False)
 
 def download_all():
-    global engine
-    # Handle full‑refresh: drop DB file then recreate a **fresh** engine that points to the new file.
-    if UPDATE_MODE == "full":
-        if DB_PATH.exists():
-            logger.info("Full refresh – deleting %s", DB_PATH)
-            engine.dispose()          # close pooled connections referencing the old file
-            DB_PATH.unlink()          # remove old db file
-        # After deletion we must rebuild the engine so that new connections
-        # point at the recreated file, otherwise every to_sql() will fail.
-    engine = create_engine(f"sqlite:///{DB_PATH}")
-    
-    # --- guarantee raw_financials table has the complete schema before inserts ---
-    # Creating an empty table upfront prevents “Item wrong length …” errors that occur
-    # when the first DataFrame written happens to miss some columns, causing SQLite
-    # to create a truncated schema.  We create the table with the full RAW_COLS set,
-    # then all subsequent `append` operations will match this schema regardless of
-    # which columns have real data.
-    with sqlite3.connect(DB_PATH) as conn:
-        pd.DataFrame(columns=RAW_COLS).to_sql(
-            RAW_TABLE, conn, if_exists="replace", index=False
-        )
-
-    fails = []
-    for row in tqdm(SP500_META.itertuples(), total=len(SP500_META), desc="Downloading"):
-        try:
-            save_raw_to_db(row.ticker, download_single_ticker(row.ticker))
-        except Exception as exc:
-            logger.error("Failed to save %s -> %s", row.ticker, exc)
-            fails.append(f"{row.ticker}: {exc}")
-        time.sleep(BATCH_PAUSE)
-
-    # flush pooled connections so that subsequent sqlite3.connect() sees the data
-    engine.dispose()
-    if fails:
-        logger.warning("Finished with %d failed tickers", len(fails))
+    """Disabled financial statement download."""
+    logger.info("[download_all] Download step disabled – using existing database.")
 # ═════════════ METRIC COMPUTATION ════════════════════════════
 def seq_growth(series: pd.Series) -> float:
     """Rolling Q‑to‑Q growth (last 3 pairs) with turn‑positive patch."""
@@ -347,8 +314,8 @@ def seq_growth(series: pd.Series) -> float:
     valid = growth_vec[~np.isnan(growth_vec)]
     return valid.mean() if valid.size else np.nan 
 
-def compute_metrics() -> pd.DataFrame:
-    raw = pd.read_sql(f"SELECT * FROM {RAW_TABLE}", sqlite3.connect(DB_PATH))
+def compute_metrics(db_path: str | Path = DB_PATH) -> pd.DataFrame:
+    raw = pd.read_sql(f"SELECT * FROM {RAW_TABLE}", sqlite3.connect(db_path))
     # ---- force numeric dtypes -------------------------------------------------
     # SQLite may return all columns as TEXT when NaNs are present; convert every
     # non‑identifier column to numeric so downstream math (e.g. net_income /

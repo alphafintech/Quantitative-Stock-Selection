@@ -444,74 +444,8 @@ def _safe_yfinance_getter(tkr_object, attribute_name):
 
 
 def download_data_for_ticker(ticker, config, conn):
-    """下载单个 ticker 的年度和季度数据。"""
-    logging.info(f"Processing ticker: {ticker}")
-    try:
-        tkr = yf.Ticker(ticker)
-    except Exception as e:
-        logging.error(f"Failed to initialize yfinance Ticker for {ticker}: {e}")
-        return
-
-    data_config = config.get('Data', {})
-    incremental = data_config.get('incremental_download', True)
-    download_delay = data_config.get('download_delay', 0.1)
-    today = datetime.today().date()
-
-    # --- Annual ---
-    process_annual = True
-    if incremental:
-        last_annual = get_last_period(conn, ticker, 'annual_financials')
-        if last_annual:
-            try:
-                last_year = int(last_annual)
-                if last_year >= today.year - 1: process_annual = False
-            except (ValueError, TypeError): logging.warning(f"Cannot parse last annual period '{last_annual}' ({ticker}). Will download.")
-
-    if process_annual:
-        logging.debug(f"Getting annual data for {ticker}...")
-        try:
-            inc = _safe_yfinance_getter(tkr, 'income_stmt').T
-            bs = _safe_yfinance_getter(tkr, 'balance_sheet').T
-            cf = _safe_yfinance_getter(tkr, 'cashflow').T
-            data_frames = [df for df in [inc, bs, cf] if not df.empty]
-            if data_frames:
-                fin_data = pd.concat(data_frames, axis=1, join='outer')
-                fin_data = fin_data.loc[:, ~fin_data.columns.duplicated(keep='first')]
-                if not isinstance(fin_data.index, pd.DatetimeIndex):
-                    fin_data.index = pd.to_datetime(fin_data.index, errors='coerce')
-                    fin_data.dropna(axis=0, subset=[fin_data.index.name], inplace=True)
-                if not fin_data.empty: save_financial_data(conn, ticker, fin_data, 'annual_financials')
-            else: logging.warning(f"No valid annual data fetched for {ticker}.")
-        except Exception as e: logging.exception(f"Failed processing annual data for {ticker}: {e}")
-        time.sleep(download_delay)
-
-    # --- Quarterly ---
-    process_quarterly = True
-    if incremental:
-        last_quarterly = get_last_period(conn, ticker, 'quarterly_financials')
-        if last_quarterly:
-            try:
-                last_qtr_dt = datetime.strptime(last_quarterly, '%Y-%m-%d').date()
-                if (today - last_qtr_dt) < timedelta(days=80): process_quarterly = False
-            except (ValueError, TypeError): logging.warning(f"Cannot parse last quarterly period '{last_quarterly}' ({ticker}). Will download.")
-
-    if process_quarterly:
-        logging.debug(f"Getting quarterly data for {ticker}...")
-        try:
-            inc_q = _safe_yfinance_getter(tkr, 'quarterly_income_stmt').T
-            bs_q = _safe_yfinance_getter(tkr, 'quarterly_balance_sheet').T
-            cf_q = _safe_yfinance_getter(tkr, 'quarterly_cashflow').T
-            data_frames_q = [df for df in [inc_q, bs_q, cf_q] if not df.empty]
-            if data_frames_q:
-                fin_data_q = pd.concat(data_frames_q, axis=1, join='outer')
-                fin_data_q = fin_data_q.loc[:, ~fin_data_q.columns.duplicated(keep='first')]
-                if not isinstance(fin_data_q.index, pd.DatetimeIndex):
-                    fin_data_q.index = pd.to_datetime(fin_data_q.index, errors='coerce')
-                    fin_data_q.dropna(axis=0, subset=[fin_data_q.index.name], inplace=True)
-                if not fin_data_q.empty: save_financial_data(conn, ticker, fin_data_q, 'quarterly_financials')
-            else: logging.warning(f"No valid quarterly data fetched for {ticker}.")
-        except Exception as e: logging.exception(f"Failed processing quarterly data for {ticker}: {e}")
-        time.sleep(download_delay)
+    """Disabled download for ticker."""
+    logging.info(f"[download_data_for_ticker] Skipped download for {ticker} – using existing DB data.")
 
 
 def fetch_data_from_db(conn):
@@ -1180,8 +1114,8 @@ def calculate_final_score(df, config):
     logging.info("Finished calculating final scores.")
     return df
 # --- Main Execution Function (Modified) ---
-# MODIFIED: Added update_data parameter with default True
-def compute_growth_score(update_data=True):
+# MODIFIED: Added update_data parameter with default False and db_path override
+def compute_growth_score(update_data=False, db_path: str | None = None):
     """
     Main function to orchestrate the growth score calculation process.
 
@@ -1208,7 +1142,7 @@ def compute_growth_score(update_data=True):
     # --- Database Connection & Setup ---
     conn = None
     try:
-        db_name = data_cfg.get('db_name', 'S&P500_finance_data.db')
+        db_name = db_path or data_cfg.get('db_name', 'SP500_finance_data.db')
         conn = create_db_connection(db_name)
         if not conn:
             logging.critical("Failed to establish database connection. Exiting.")
