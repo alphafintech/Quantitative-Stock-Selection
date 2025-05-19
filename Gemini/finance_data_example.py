@@ -32,7 +32,7 @@ def get_stock_financials(ticker: str,
     Args:
         ticker (str): 要查询的股票代码 (例如 'AAPL', 'MSFT').
         db_path (str): SQLite 数据库文件的路径。
-                       默认为 'S&P500_finance_data.db'。
+                       默认为 'SP500_finance_data.db'。
         save_to_excel (bool): 如果为 True，则将获取的数据保存到 Excel 文件。
                               默认为 False。
 

@@ -10,9 +10,10 @@ Database locations are defined in `config.ini` under the `[database]` section:
 price_db = SP500_price_data.db
 finance_db = SP500_finance_data.db
 ```
-
 Both paths are relative to the project root unless absolute paths are provided.
 Scripts that download or process data will automatically use these settings.
+
+All configuration files and helper scripts expect the finance database to be named `SP500_finance_data.db`.
 
 ### Working Directory
 

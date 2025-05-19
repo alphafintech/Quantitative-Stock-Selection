@@ -28,7 +28,7 @@ def export_ticker_financials_to_excel(ticker: str,
     # 读取 db 路径
     cfg = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
     cfg.read(cfg_path, encoding="utf-8")
-    db_name = cfg["database"].get("db_name", "sp500_finance.db")
+    db_name = cfg["database"].get("db_name", "SP500_finance_data.db")
     db_path = Path(cfg_path).parent / db_name
 
     if not db_path.exists():
