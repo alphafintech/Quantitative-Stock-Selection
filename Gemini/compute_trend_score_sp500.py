@@ -67,12 +67,18 @@ def create_connection(db_file):
     """
     conn = None
     try:
+        # 如果提供的是相对路径，则基于项目根目录解析为绝对路径
+        if not os.path.isabs(db_file):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(script_dir)
+            db_file = os.path.join(project_root, db_file)
+
         # 确保目录存在
         db_dir = os.path.dirname(db_file)
-        if db_dir:
-            if not os.path.exists(db_dir):
-                os.makedirs(db_dir)
-                logging.info(f"已创建数据库目录: {db_dir}")
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir)
+            logging.info(f"已创建数据库目录: {db_dir}")
+
         conn = sqlite3.connect(db_file)
         logging.debug(f"成功连接到 SQLite 数据库: {db_file}")
     except sqlite3.Error as e:
