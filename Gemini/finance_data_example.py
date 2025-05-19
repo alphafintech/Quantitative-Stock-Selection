@@ -2,6 +2,7 @@ import sqlite3
 import pandas as pd
 import logging
 import os
+import configparser
 
 # 尝试导入 openpyxl，用于写入 Excel
 try:
@@ -14,8 +15,15 @@ except ImportError:
 # 配置基本的日志记录
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [GetData] %(message)s')
 
+
+def _get_finance_db(cfg_path: str = "config.ini") -> str:
+    cfg = configparser.ConfigParser()
+    if os.path.exists(cfg_path):
+        cfg.read(cfg_path)
+    return cfg.get("database", "finance_db", fallback="SP500_finance_data.db")
+
 def get_stock_financials(ticker: str,
-                         db_path: str = 'S&P500_finance_data.db',
+                         db_path: str = _get_finance_db(),
                          save_to_excel: bool = False):
     """
     从指定的 SQLite 数据库获取单个股票的年度和季度财务数据，
@@ -150,7 +158,7 @@ def get_stock_financials(ticker: str,
 
 # --- 示例用法 ---
 if __name__ == "__main__":
-    db_file = 'S&P500_finance_data.db'
+    db_file = _get_finance_db()
     example_ticker = 'NVDA' # 换一个 Ticker 示例
 
     # --- 示例 1: 只获取数据，不保存 ---

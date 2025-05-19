@@ -13,6 +13,14 @@ import os
 import warnings
 import sys
 
+
+def _get_finance_db(cfg_path: str = "config.ini") -> str:
+    """Return finance DB path from config or default."""
+    parser = configparser.ConfigParser()
+    if os.path.exists(cfg_path):
+        parser.read(cfg_path)
+    return parser.get("database", "finance_db", fallback="SP500_finance_data.db")
+
 # --- Configuration & Logging Setup ---
 warnings.filterwarnings('ignore', category=FutureWarning) # Ignore yfinance/pandas future warnings
 # Suppress the SettingWithCopyWarning *after* confirming the fix below works
@@ -1142,7 +1150,7 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
     # --- Database Connection & Setup ---
     conn = None
     try:
-        db_name = db_path or data_cfg.get('db_name', 'SP500_finance_data.db')
+        db_name = db_path or data_cfg.get('db_name') or _get_finance_db()
         conn = create_db_connection(db_name)
         if not conn:
             logging.critical("Failed to establish database connection. Exiting.")
