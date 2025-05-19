@@ -220,9 +220,15 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
         try:
             # Use the full history if the config start date is the default "1900-01-01".
             if config_start == '1900-01-01':
-                df = yf.download(ticker, period="max", progress=False)
+                df = yf.download(ticker, period="max", progress=False, auto_adjust=False)
             else:
-                df = yf.download(ticker, start=config_start, end=config_end, progress=False)
+                df = yf.download(
+                    ticker,
+                    start=config_start,
+                    end=config_end,
+                    progress=False,
+                    auto_adjust=False,
+                )
         except Exception as e:
             print(f"Error downloading data for {ticker}: {e}")
             return
@@ -244,7 +250,13 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
             backfill_end = (existing_min_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
             print(f"Backfilling for {ticker} from {backfill_start} to {backfill_end}.")
             try:
-                df_backfill = yf.download(ticker, start=backfill_start, end=backfill_end, progress=False)
+                df_backfill = yf.download(
+                    ticker,
+                    start=backfill_start,
+                    end=backfill_end,
+                    progress=False,
+                    auto_adjust=False,
+                )
                 if not df_backfill.empty:
                     new_data = pd.concat([new_data, df_backfill])
                 else:
@@ -257,7 +269,13 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
             incremental_start = (existing_max_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
             print(f"Incremental update for {ticker} from {incremental_start} to {config_end}.")
             try:
-                df_update = yf.download(ticker, start=incremental_start, end=config_end, progress=False)
+                df_update = yf.download(
+                    ticker,
+                    start=incremental_start,
+                    end=config_end,
+                    progress=False,
+                    auto_adjust=False,
+                )
                 if not df_update.empty:
                     new_data = pd.concat([new_data, df_update])
                 else:
