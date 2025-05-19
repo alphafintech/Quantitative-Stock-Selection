@@ -618,10 +618,28 @@ def calculate_all_indicators(conn):
             logging.info(f"正在为 Ticker {i+1}/{total_tickers_to_process} ({ticker}) 计算指标...")
 
         try:
-            # Load necessary historical data for this ticker
-            cols_needed = ['Date', 'Open', 'High', 'Low', 'Close', 'AdjClose', 'Volume']
-            cols_needed_str = ", ".join([f'"{c}"' for c in cols_needed])
-            query = f'SELECT {cols_needed_str} FROM "{main_table}" WHERE Ticker = ? ORDER BY Date'
+            # Load necessary historical data for this ticker.
+            # The database created by ``yahoo_downloader.py`` stores the base
+            # price columns in lowercase (date, open, high, ...).  Many parts of
+            # this script expect the classic CamelCase column names used by
+            # pandas/yfinance.  We therefore alias the lowercase DB columns back
+            # to the expected names on SELECT so subsequent code continues to
+            # work unchanged.
+
+            base_aliases = [
+                'date AS "Date"',
+                'open AS "Open"',
+                'high AS "High"',
+                'low AS "Low"',
+                'close AS "Close"',
+                'adj_close AS "AdjClose"',
+                'volume AS "Volume"',
+            ]
+            cols_needed_str = ", ".join(base_aliases)
+            query = (
+                f'SELECT {cols_needed_str} FROM "{main_table}" '
+                f'WHERE ticker = ? ORDER BY date'
+            )
             # Use index_col and parse_dates for efficiency
             df_ticker = pd.read_sql_query(
                 query,
@@ -970,7 +988,12 @@ def calculate_and_save_trend_scores(conn):
     # Add optional columns only if they exist (based on config generation)
     optional_cols = [ma50_col, ma200_col, macd_col, macds_col, adx_col, dmp_col, dmn_col, rsi_col]
     required_cols = required_cols_base + [c for c in optional_cols if c]
-    required_cols_str = ", ".join([f'"{c}"' for c in required_cols])
+
+    # Build SELECT list.  Base price columns come from the DB in lowercase, so
+    # alias them back to CamelCase to keep the rest of the code (which expects
+    # 'Date'/'AdjClose') functioning without change.
+    base_aliases = ['date AS "Date"', 'adj_close AS "AdjClose"']
+    required_cols_str = ", ".join(base_aliases + [f'"{c}"' for c in required_cols[2:]])
 
     # --- Iterate and Score ---
     trend_scores_data = []
@@ -986,7 +1009,10 @@ def calculate_and_save_trend_scores(conn):
             # Ensure enough lookback for the rolling window
             fetch_limit = obv_sma_period + 20 # Add buffer
 
-            query = f'SELECT {required_cols_str} FROM "{main_table}" WHERE Ticker = ? ORDER BY Date DESC LIMIT {fetch_limit}'
+            query = (
+                f'SELECT {required_cols_str} FROM "{main_table}" '
+                f'WHERE ticker = ? ORDER BY date DESC LIMIT {fetch_limit}'
+            )
             df_ticker = pd.read_sql_query(
                 query,
                 conn,
