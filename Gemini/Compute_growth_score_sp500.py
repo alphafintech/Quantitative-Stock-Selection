@@ -1356,12 +1356,4 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
 
 # --- Entry Point ---
 if __name__ == "__main__":
-    # This allows running the growth score script directly
-    # By default, it will update data unless controlled otherwise (e.g., by args if added)
-    print("Running compute_growth_score script directly...")
-    # Example: Add argparse here if you want command-line control when running directly
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument('--no-update', action='store_true', help='Skip data update when run directly')
-    # args = parser.parse_args()
-    # compute_growth_score(update_data=not args.no_update)
-    compute_growth_score(False) # Example: Default to NOT update when run directly
+    compute_growth_score(False)  # Example: default is not to update when run directly
