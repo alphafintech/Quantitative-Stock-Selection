@@ -21,6 +21,13 @@
 - 完全跳过 Gemini 流程:
   python Run_complete_program.py --skip-Gemini
 
+# --- 公共数据下载 ---
+- 默认下载并更新两个共享数据库:
+  SP500_price_data.db 与 SP500_finance_data.db
+- 分别使用以下选项跳过下载:
+  python Run_complete_program.py --skip-pricedata-download
+  python Run_complete_program.py --skip-financedata-download
+
 # --- GPT 流程 ---
 - 运行完整 GPT 流程 (默认执行):
   python Run_complete_program.py
@@ -47,6 +54,7 @@ import pandas as pd
 from pathlib import Path
 import configparser
 import datetime as dt
+from download_data import download_price_data, download_finance_data
 
 # --- 配置日志记录 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MainRunner] %(message)s')
@@ -130,6 +138,19 @@ def run_main_process():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
+    # 公共数据下载控制参数
+    dl_group = parser.add_argument_group('Common Data Download')
+    dl_group.add_argument(
+        '--skip-pricedata-download',
+        action='store_true',
+        help='跳过共享价格数据库更新 (SP500_price_data.db)'
+    )
+    dl_group.add_argument(
+        '--skip-financedata-download',
+        action='store_true',
+        help='跳过共享财务数据库更新 (SP500_finance_data.db)'
+    )
+
     # Gemini 控制参数
     gemini_group = parser.add_argument_group('Gemini Pipeline Control (默认执行, 除非 --skip-Gemini)')
     gemini_group.add_argument(
@@ -172,6 +193,25 @@ def run_main_process():
     )
 
     args = parser.parse_args()
+
+    # --- 公共数据库下载步骤 ---
+    if not args.skip_pricedata_download:
+        logging.info("--- 下载价格历史数据 ---")
+        try:
+            download_price_data()
+        except Exception as e:
+            logging.error(f"下载价格数据时出错: {e}", exc_info=True)
+    else:
+        logging.info("--- 跳过价格数据下载 ---")
+
+    if not args.skip_financedata_download:
+        logging.info("--- 下载财务报表数据 ---")
+        try:
+            download_finance_data()
+        except Exception as e:
+            logging.error(f"下载财务数据时出错: {e}", exc_info=True)
+    else:
+        logging.info("--- 跳过财务数据下载 ---")
 
     # --- 执行 Gemini 流程 (如果可用且未被跳过) ---
     if GEMINI_AVAILABLE and not args.skip_Gemini:

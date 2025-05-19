@@ -47,21 +47,39 @@ CFG_FINANCE  = ROOT / "config_finance.ini"
 # ------------------------------------------------------------
 # 依赖脚本函数导入
 # ------------------------------------------------------------
-from .Compute_Trend_score_SP500_GPT import run_process_control as trend_run_ctrl
-from .compute_high_growth_score_SP500_GPT import (
-    download_all as FIN_DOWNLOAD,
-    compute_metrics as FIN_METRICS,
-    calc_scores as FIN_SCORES,
-    export_excel as FIN_EXPORT,
+from .Compute_Trend_score_SP500_GPT import (
+    run_process_control as trend_run_ctrl,
+    sync_from_common_db as trend_sync,
 )
+try:
+    from .compute_high_growth_score_SP500_GPT import (
+        sync_from_common_db as finance_sync,
+        compute_metrics as FIN_METRICS,
+        calc_scores as FIN_SCORES,
+        export_excel as FIN_EXPORT,
+        initialize as FIN_INIT,
+    )
+except ImportError:
+    from .compute_high_growth_score_SP500_GPT import (
+        sync_from_common_db as finance_sync,
+        compute_metrics as FIN_METRICS,
+        calc_scores as FIN_SCORES,
+        export_excel as FIN_EXPORT,
+    )
+    FIN_INIT = lambda *a, **k: None
 
 # ------------------------------------------------------------
 # logging
 # ------------------------------------------------------------
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(message)s",
-                    handlers=[logging.StreamHandler(sys.stdout)])
 log = logging.getLogger("orchestrator")
+
+def setup_logging() -> None:
+    if not log.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
 
 # ------------------------------------------------------------
 # 辅助：找出最新文件
@@ -124,28 +142,29 @@ def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
 # ------------------------------------------------------------
 
 def build_trend_scores(update_db: bool, recalc_scores: bool) -> None:
-    stage = None
     if update_db:
-        stage = 0
+        log.info("[Trend] syncing from common DB …")
+        trend_sync("../SP500_price_data.db")
+        trend_run_ctrl(2)
+        trend_run_ctrl(3)
     elif recalc_scores:
-        stage = 3
-    if stage is not None:
-        log.info("[Trend] run_process_control(stage=%d)", stage)
-        trend_run_ctrl(stage)
+        log.info("[Trend] recomputing trend scores …")
+        trend_run_ctrl(3)
     else:
         log.info("[Trend] skipped")
 
 
 def build_finance_scores(update_db: bool, recalc_scores: bool) -> None:
+    FIN_INIT()
     if update_db:
-        log.info("[Finance] refreshing DB …")
-        FIN_DOWNLOAD()
-    if recalc_scores:
+        log.info("[Finance] syncing from common DB …")
+        finance_sync("../SP500_finance_data.db")
+    if recalc_scores or update_db:
         log.info("[Finance] recomputing scores …")
         metrics = FIN_METRICS()
-        scores  = FIN_SCORES(metrics)
+        scores = FIN_SCORES(metrics)
         FIN_EXPORT(scores)
-    if not (update_db or recalc_scores):
+    else:
         log.info("[Finance] skipped")
 
 
@@ -230,6 +249,7 @@ def run_pipeline(*,
                  recalc_scores: bool = True,
                  do_selection: bool = True,
                  cfg_run: Path = CFG_RUN) -> None:
+    setup_logging()
     start = dt.datetime.now()
     log.info("========== PIPELINE START ==========")
 
@@ -264,6 +284,7 @@ def test_pipeline():
 # ------------------------------------------------------------
 #if __name__ == "__main__":
 def main():
+    setup_logging()
     import argparse
     p = argparse.ArgumentParser(description="S&P500 Trend + Fundamental orchestrator")
     p.add_argument("--cfg", default=str(CFG_RUN), help="path to config_run.ini")
@@ -278,3 +299,6 @@ def main():
                  recalc_scores=args.recalc,
                  do_selection=args.select,
                  cfg_run=Path(args.cfg))
+
+if __name__ == "__main__":
+    main()

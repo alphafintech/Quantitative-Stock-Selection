@@ -9,13 +9,22 @@ import os
 import configparser
 import sqlite3
 import datetime
+from pathlib import Path
+from urllib.error import URLError
 import pandas as pd
+import requests
 import yfinance as yf
 import time
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover - tqdm optional
+    def tqdm(iterable=None, **kwargs):
+        return iterable if iterable is not None else []
 
 
-db_file = "sp500_data_GPT.db"
-config_file = "config_trend.ini"
+ROOT = Path(__file__).resolve().parent
+db_file = ROOT / "sp500_data_GPT.db"
+config_file = ROOT / "config_trend.ini"
 
 
 # ----------------- Configuration ----------------- #
@@ -56,7 +65,7 @@ def read_config(config_file="config.ini"):
     return start_date, end_date
 
 # ----------------- Database Setup ----------------- #
-def init_db(db_file="sp500_data.db"):
+def init_db(db_file: str | Path = db_file):
     """
     Initialize (or connect to) the local SQLite database and create the required table if it does not exist.
     Returns the connection and cursor.
@@ -82,17 +91,33 @@ def init_db(db_file="sp500_data.db"):
 
 # ----------------- Retrieve S&P 500 Tickers ----------------- #
 def get_sp500_tickers():
+    """Retrieve the list of S&P 500 tickers.
+
+    The function first attempts to scrape the ticker table from Wikipedia.  If
+    that fails due to a network issue or parsing error, it falls back to loading
+    a local static file ``sp500_tickers.txt`` located next to this module.  When
+    both methods fail an empty list is returned.
     """
-    Retrieves the current list of S&P 500 tickers by scraping the Wikipedia page.
-    Adjusts ticker symbols if necessary (e.g., changing '.' to '-' for Yahoo Finance compatibility).
-    Returns a list of ticker symbols.
-    """
+
     print("Retrieving S&P 500 tickers from Wikipedia...")
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    tables = pd.read_html(url)
-    df = tables[0]
+    try:
+        tables = pd.read_html(url)
+        df = tables[0]
+    except (requests.exceptions.RequestException, URLError, ValueError) as e:
+        print(f"Failed to retrieve tickers from Wikipedia: {e}")
+        fallback = Path(__file__).with_name("sp500_tickers.txt")
+        if fallback.exists():
+            print(f"Loading tickers from fallback file {fallback}.")
+            tickers = [line.strip() for line in fallback.read_text().splitlines() if line.strip()]
+            tickers = [t.replace('.', '-') for t in tickers]
+            if "SPY" not in tickers:
+                tickers.append("SPY")
+            return tickers
+        else:
+            print("No fallback ticker file available. Returning empty list.")
+            return []
     tickers = df['Symbol'].tolist()
-    # Adjust tickers: replace '.' with '-' for Yahoo Finance compatibility.
     tickers = [ticker.replace('.', '-') for ticker in tickers]
     print(f"Retrieved {len(tickers)} ticker symbols.")
     tickers.append("SPY")   # 用于 RS 计算
@@ -211,9 +236,9 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
         try:
             # Use the full history if the config start date is the default "1900-01-01".
             if config_start == '1900-01-01':
-                df = yf.download(ticker, period="max", progress=False)
+                df = yf.download(ticker, period="max", progress=True)
             else:
-                df = yf.download(ticker, start=config_start, end=config_end, progress=False)
+                df = yf.download(ticker, start=config_start, end=config_end, progress=True)
         except Exception as e:
             print(f"Error downloading data for {ticker}: {e}")
             return
@@ -235,7 +260,7 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
             backfill_end = (existing_min_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
             print(f"Backfilling for {ticker} from {backfill_start} to {backfill_end}.")
             try:
-                df_backfill = yf.download(ticker, start=backfill_start, end=backfill_end, progress=False)
+                df_backfill = yf.download(ticker, start=backfill_start, end=backfill_end, progress=True)
                 if not df_backfill.empty:
                     new_data = pd.concat([new_data, df_backfill])
                 else:
@@ -248,7 +273,7 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
             incremental_start = (existing_max_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
             print(f"Incremental update for {ticker} from {incremental_start} to {config_end}.")
             try:
-                df_update = yf.download(ticker, start=incremental_start, end=config_end, progress=False)
+                df_update = yf.download(ticker, start=incremental_start, end=config_end, progress=True)
                 if not df_update.empty:
                     new_data = pd.concat([new_data, df_update])
                 else:
@@ -264,7 +289,7 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
         print(f"No new data to insert for {ticker}.")
 
 # ----------------- Main Execution ----------------- #
-def Update_DB(db_file):
+def Update_DB(db_file: Path | str = db_file):
     # Read configuration.
     config_start, config_end = read_config(config_file)
 
@@ -273,6 +298,10 @@ def Update_DB(db_file):
 
     # Retrieve S&P 500 tickers.
     tickers = get_sp500_tickers()
+    if not tickers:
+        print("No tickers available; aborting update.")
+        conn.close()
+        return
 
     # # Process each ticker one by one.
     # for ticker in tickers:
@@ -281,7 +310,7 @@ def Update_DB(db_file):
     # ----------------- BATCH DOWNLOAD ----------------- #
     BATCH = 50  # 每批 50 支股票，可按需调大/调小
 
-    for i in range(0, len(tickers), BATCH):
+    for i in tqdm(range(0, len(tickers), BATCH), desc="Downloading price data"):
         batch = tickers[i:i + BATCH]
 
         # 1) 统一下载
@@ -290,7 +319,7 @@ def Update_DB(db_file):
                                 start=config_start,
                                 end=config_end,
                                 group_by="ticker",
-                                progress=False,
+                                progress=True,
                                 threads=False)  # 避免多线程触发限流
         except Exception as e:
             print(f"[BatchDownload] error on batch {batch[0]}…{batch[-1]}: {e}")
@@ -299,7 +328,7 @@ def Update_DB(db_file):
                                 start=config_start,
                                 end=config_end,
                                 group_by="ticker",
-                                progress=False,
+                                progress=True,
                                 threads=False)
 
         # 2) 拆分并写入 DB
@@ -318,6 +347,12 @@ def Update_DB(db_file):
     # Close the database connection when done.
     conn.close()
     print("\nUpdate complete. The local database now contains continuous historical data for all S&P 500 stocks.")
+
+def sync_from_common_db(src_db: str, dest_db: Path | str = db_file) -> None:
+    """Replace local DB with a copy of *src_db*."""
+    dst = Path(dest_db)
+    with sqlite3.connect(src_db) as s, sqlite3.connect(dst) as d:
+        s.backup(d)
 
 
 # ----------------- Calculate and Store Moving Averages ----------------- #
