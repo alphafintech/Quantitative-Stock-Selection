@@ -9,16 +9,28 @@ import os
 import configparser
 import sqlite3
 import datetime
+from pathlib import Path
 import pandas as pd
 import yfinance as yf
 import time
 
 
 def _get_price_db(cfg_path: str = "config.ini") -> str:
-    """Return price DB path from config or default."""
+    """Return price DB path from config or default.
+
+    If ``cfg_path`` does not exist relative to the current working
+    directory, also look relative to this script's parent directory so
+    that the correct database is located when the script is executed
+    from a subfolder.
+    """
     cfg = configparser.ConfigParser()
-    if os.path.exists(cfg_path):
-        cfg.read(cfg_path)
+    path = Path(cfg_path)
+    if not path.exists():
+        alt = Path(__file__).resolve().parent.parent / cfg_path
+        if alt.exists():
+            path = alt
+    if path.exists():
+        cfg.read(path)
     return cfg.get("database", "price_db", fallback="SP500_price_data.db")
 
 
