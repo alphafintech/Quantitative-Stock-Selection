@@ -130,7 +130,7 @@ def load_configuration(config_file='config.ini'):
 
     # Database
     db_conf = CONFIG.setdefault('database', {})
-    db_conf['db_file'] = db_conf.get('db_file', 'sp500_data.db')
+    db_conf['db_file'] = db_conf.get('db_file', 'SP500_price_data.db')
     db_conf['main_table'] = db_conf.get('main_table', 'stock_data')
     db_conf['latest_analysis_table'] = db_conf.get('latest_analysis_table', 'latest_analysis')
 
@@ -475,82 +475,9 @@ def get_existing_date_range(conn, ticker):
 
 
 def download_stock_data(ticker, start_date=None, end_date=None):
-    """从雅虎财经下载给定 Ticker 和日期范围的股票数据。"""
-    # Add 1 day to end_date because yfinance excludes the end date
-    effective_end_date = None
-    if end_date:
-        effective_end_date = end_date + timedelta(days=1)
-
-    start_str = "earliest"
-    if start_date:
-         start_str = start_date.strftime('%Y-%m-%d')
-    end_str = "latest"
-    if end_date:
-         end_str = end_date.strftime('%Y-%m-%d')
-
-    logging.info(f"Attempting download for {ticker} from {start_str} to {end_str}")
-
-    try:
-        stock = yf.Ticker(ticker)
-        # Fetch data - auto_adjust=False gives Open, High, Low, Close, Adj Close, Volume
-        history = stock.history(
-            start=start_date,
-            end=effective_end_date,
-            auto_adjust=False,
-            interval='1d'
-        )
-
-        if history.empty:
-            logging.warning(f"No data found for {ticker} in range {start_str} to {end_str}.")
-            return None
-
-        # Ensure index is timezone-naive DatetimeIndex
-        if isinstance(history.index, pd.DatetimeIndex):
-             if history.index.tz is not None:
-                 history.index = history.index.tz_convert(None)
-        else:
-            # Handle non-DatetimeIndex cases if necessary
-            history.index = pd.to_datetime(history.index, utc=True)
-            history.index = history.index.tz_convert(None)
-
-        history = history.reset_index() # Make Date a column
-
-        # Standardize column names (lowercase)
-        history.columns = map(str.lower, history.columns)
-
-        # Define mapping and required database columns
-        column_mapping = {
-            'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low',
-            'close': 'Close', 'adj close': 'AdjClose', 'volume': 'Volume'
-        }
-        db_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'AdjClose', 'Volume']
-
-        # Filter columns that actually exist in the downloaded data
-        cols_to_keep = [k for k in column_mapping.keys() if k in history.columns]
-        history_filtered = history[cols_to_keep].copy()
-
-        # Rename columns
-        history_filtered.rename(columns=column_mapping, inplace=True)
-
-        # Ensure all required database columns exist, adding NA if missing
-        for col in db_cols:
-            if col not in history_filtered.columns:
-                history_filtered[col] = pd.NA # Use pandas NA
-
-        # Format Date and ensure correct order
-        history_filtered['Date'] = pd.to_datetime(history_filtered['Date']).dt.strftime('%Y-%m-%d')
-        history_ordered = history_filtered[db_cols]
-
-        # Drop rows where Date is NA (shouldn't happen often)
-        history_ordered.dropna(subset=['Date'], inplace=True)
-
-        logging.info(f"Successfully downloaded {len(history_ordered)} rows for {ticker}.")
-        return history_ordered
-
-    except Exception as e:
-        # Log concisely for download errors
-        logging.error(f"Failed to download data for {ticker}: {e}", exc_info=False)
-        return None
+    """Disabled network download."""
+    logging.info(f"[download_stock_data] Skipped download for {ticker} – using existing DB data.")
+    return None
 
 
 def store_data(conn, data, ticker):
@@ -612,117 +539,9 @@ def store_data(conn, data, ticker):
 
 # --- 主要数据更新函数 (增量) ---
 def update_stock_data(conn):
-    """增量下载并存储新的历史数据。"""
-    logging.info("--- 开始历史数据更新 ---")
-    update_start_time = time.time()
-
-    tickers = get_sp500_tickers()
-    if not tickers:
-        logging.error("未获取到 Ticker 列表。停止更新。")
-        return False
-
-    start_date_str = CONFIG['data_download'].get('start_date')
-    end_date_str = CONFIG['data_download'].get('end_date')
-
-    config_start_date = None
-    if start_date_str:
-        config_start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-
-    config_end_date = date.today() # Default end_date to today if not specified
-    if end_date_str:
-        config_end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
-
-    total_rows_added = 0
-    processed_tickers = 0
-    failed_tickers = []
-    download_delay = CONFIG['performance']['download_delay']
-    total_tickers = len(tickers)
-
-    for i, ticker in enumerate(tickers):
-        # Log progress periodically
-        if (i + 1) % 50 == 0:
-            logging.info(f"正在检查 Ticker {i+1}/{total_tickers} ({ticker}) 的数据...")
-
-        db_min_date, db_max_date = get_existing_date_range(conn, ticker)
-
-        # Determine download ranges needed
-        download_ranges = []
-        if db_max_date is None: # New ticker
-            start_dl = config_start_date
-            end_dl = config_end_date
-            download_ranges.append((start_dl, end_dl))
-            logging.info(f"新 Ticker {ticker}。计划完整下载 ({start_dl} to {end_dl})。")
-        else: # Existing ticker
-            # Check if need data before earliest existing date
-            if config_start_date and config_start_date < db_min_date:
-                start_dl = config_start_date
-                end_dl = db_min_date - timedelta(days=1)
-                download_ranges.append((start_dl, end_dl))
-            # Check if need data after latest existing date
-            if config_end_date > db_max_date:
-                start_dl = db_max_date + timedelta(days=1)
-                end_dl = config_end_date
-                download_ranges.append((start_dl, end_dl))
-
-        ticker_rows_added_this_run = 0
-        ticker_processed_successfully = True # Assume success unless download fails
-        if download_ranges:
-            logging.debug(f"{ticker} 的下载范围: {download_ranges}")
-            ticker_failed_download = False
-            for start, end in download_ranges:
-                # Skip if start is logically after end
-                if start and end and start > end:
-                    continue
-
-                # Add delay before each download attempt
-                time.sleep(download_delay)
-                data = download_stock_data(ticker, start, end)
-
-                if data is not None:
-                    if not data.empty:
-                         # Store data returns rows inserted/ignored
-                        rows_stored = store_data(conn, data, ticker)
-                        ticker_rows_added_this_run += rows_stored # Accumulate stored rows
-                else:
-                    # download_stock_data returned None, indicating explicit failure
-                    ticker_failed_download = True
-                    ticker_processed_successfully = False # Mark as failed
-                    break # Stop trying ranges for this failed ticker
-
-            if ticker_failed_download:
-                failed_tickers.append(ticker)
-
-        # Increment processed count regardless of whether download was needed or successful
-        # If download failed, it was still "processed" (attempted).
-        processed_tickers += 1
-        total_rows_added += ticker_rows_added_this_run # Add rows stored for this ticker
-
-
-    # Summary Logging
-    unique_failed_tickers = sorted(list(set(failed_tickers))) # Ensure unique list
-    logging.info("--- 历史数据更新摘要 ---")
-    logging.info(f"已处理 Ticker 数量: {processed_tickers}/{total_tickers}")
-    logging.info(f"新增/忽略的历史数据行总数: {total_rows_added}") # Clarify meaning
-    if unique_failed_tickers:
-        logging.warning(f"下载失败的 Ticker 数量: {len(unique_failed_tickers)}")
-        # Log only first few failed tickers if list is very long
-        log_limit = 10
-        failed_tickers_str = ', '.join(unique_failed_tickers[:log_limit])
-        if len(unique_failed_tickers) > log_limit:
-             failed_tickers_str += f", ... ({len(unique_failed_tickers) - log_limit} more)"
-        logging.warning(f"失败的 Ticker 列表 (部分): {failed_tickers_str}")
-
-    update_end_time = time.time()
-    duration = update_end_time - update_start_time
-    logging.info(f"--- 历史数据更新完成 (耗时: {duration:.2f} 秒) ---")
-
-    # Return True, indicating completion, even if some tickers failed download
-    # Specific failures are logged. Alternatively, return False if any ticker failed.
-    # Let's return True for completion, False only for major setup errors.
+    """Disabled data update step."""
+    logging.info("[update_stock_data] Data update disabled – using existing database.")
     return True
-
-
-# --- Combined Indicator Calculation Function ---
 def calculate_all_indicators(conn):
     """
     计算并存储所有指标 (MAs, RSI, MACD, BBands, Stoch, OBV, ADX, 52w H/L, ROC)
@@ -1389,7 +1208,7 @@ def calculate_and_save_trend_scores(conn):
 
 
 # --- 主执行块 ---
-def compute_trend_score():
+def compute_trend_score(db_path: str | None = None):
     """主函数，解析参数并执行操作。"""
     parser = argparse.ArgumentParser(description='下载、计算和分析 S&P 500 股票数据。')
     # Update help text for score action
@@ -1418,10 +1237,10 @@ def compute_trend_score():
         return # Exit on other loading errors
 
     # Establish database connection
-    db_file_path = CONFIG.get('database', {}).get('db_file') # Safely get db path
+    db_file_path = db_path or CONFIG.get('database', {}).get('db_file', 'SP500_price_data.db')
     if not db_file_path:
-         logging.error("配置中未指定数据库文件路径 (database -> db_file)。")
-         return
+        logging.error("配置中未指定数据库文件路径 (database -> db_file)。")
+        return
     conn = create_connection(db_file_path)
     if conn is None:
         logging.error("无法连接到数据库。退出。")

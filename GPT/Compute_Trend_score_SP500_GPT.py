@@ -14,7 +14,8 @@ import yfinance as yf
 import time
 
 
-db_file = "sp500_data_GPT.db"
+# Default database storing historical price data
+DEFAULT_DB_FILE = "SP500_price_data.db"
 config_file = "config_trend.ini"
 
 
@@ -56,7 +57,7 @@ def read_config(config_file="config.ini"):
     return start_date, end_date
 
 # ----------------- Database Setup ----------------- #
-def init_db(db_file="sp500_data.db"):
+def init_db(db_file=DEFAULT_DB_FILE):
     """
     Initialize (or connect to) the local SQLite database and create the required table if it does not exist.
     Returns the connection and cursor.
@@ -264,60 +265,9 @@ def update_ticker_data(ticker, config_start, config_end, cursor, conn):
         print(f"No new data to insert for {ticker}.")
 
 # ----------------- Main Execution ----------------- #
-def Update_DB(db_file):
-    # Read configuration.
-    config_start, config_end = read_config(config_file)
-
-    # Initialize (or create) the database.
-    conn, cursor = init_db(db_file)
-
-    # Retrieve S&P 500 tickers.
-    tickers = get_sp500_tickers()
-
-    # # Process each ticker one by one.
-    # for ticker in tickers:
-    #     update_ticker_data(ticker, config_start, config_end, cursor, conn)
-    #     time.sleep(0.2)
-    # ----------------- BATCH DOWNLOAD ----------------- #
-    BATCH = 50  # 每批 50 支股票，可按需调大/调小
-
-    for i in range(0, len(tickers), BATCH):
-        batch = tickers[i:i + BATCH]
-
-        # 1) 统一下载
-        try:
-            df_all = yf.download(batch,
-                                start=config_start,
-                                end=config_end,
-                                group_by="ticker",
-                                progress=False,
-                                threads=False)  # 避免多线程触发限流
-        except Exception as e:
-            print(f"[BatchDownload] error on batch {batch[0]}…{batch[-1]}: {e}")
-            time.sleep(60)  # 指数退避：简单 sleep 后重试一次
-            df_all = yf.download(batch,
-                                start=config_start,
-                                end=config_end,
-                                group_by="ticker",
-                                progress=False,
-                                threads=False)
-
-        # 2) 拆分并写入 DB
-        for tk in batch:
-            if tk not in df_all.columns.get_level_values(0):
-                print(f"[BatchDownload] no data for {tk}")
-                continue
-            df_single = df_all[tk].dropna(how="all")
-            if df_single.empty:
-                continue
-            insert_data(cursor, conn, df_single, tk)
-
-        # 3) 可选：每完成一批暂停几秒
-        time.sleep(1)
-
-    # Close the database connection when done.
-    conn.close()
-    print("\nUpdate complete. The local database now contains continuous historical data for all S&P 500 stocks.")
+def Update_DB(db_file, *_, **__):
+    """Disabled data download step."""
+    print("[Update_DB] Download step disabled – using existing database.")
 
 
 # ----------------- Calculate and Store Moving Averages ----------------- #
@@ -1202,7 +1152,7 @@ def reset_database(db_path):
     else:
         print(f"[reset_database] {db_path} does not exist – no need to delete.")
 # ----------------- Process Control Wrapper ----------------- #
-def run_process_control(stage: int):
+def run_process_control(stage: int, db_path: str = DEFAULT_DB_FILE):
     """
     根据 stage 参数控制流程：
       0 → 全流程(强制全量更新DB)
@@ -1211,22 +1161,22 @@ def run_process_control(stage: int):
       3 → 仅 TrendScore 计算
     """
     if stage == 0:
-        reset_database(db_file)   
-        Update_DB(db_file)
-        calculate_and_store_moving_averages(db_file)
-        calculate_and_store_other_indicators(db_file)
-        calculate_and_store_technical_indicators(db_file)
-        calculate_trend_indicators(db_file)
-        calculate_and_store_trend_scores(db_file)
+        reset_database(db_path)
+        Update_DB(db_path)
+        calculate_and_store_moving_averages(db_path)
+        calculate_and_store_other_indicators(db_path)
+        calculate_and_store_technical_indicators(db_path)
+        calculate_trend_indicators(db_path)
+        calculate_and_store_trend_scores(db_path)
     elif stage == 1:
-        Update_DB(db_file)
+        Update_DB(db_path)
     elif stage == 2:
-        calculate_and_store_moving_averages(db_file)
-        calculate_and_store_other_indicators(db_file)
-        calculate_and_store_technical_indicators(db_file)
-        calculate_trend_indicators(db_file)
+        calculate_and_store_moving_averages(db_path)
+        calculate_and_store_other_indicators(db_path)
+        calculate_and_store_technical_indicators(db_path)
+        calculate_trend_indicators(db_path)
     elif stage == 3:
-        calculate_and_store_trend_scores(db_file)
+        calculate_and_store_trend_scores(db_path)
     else:
         print(f"[run_process_control] 未识别的 stage 参数: {stage}，不执行任何操作。")
 
@@ -1236,6 +1186,6 @@ if __name__ == '__main__':
     cfg.read(config_file)
     runstage = int(cfg.get("run_control", "runstage", fallback="0"))
     print(f"[Main] runstage = {runstage}")
-    run_process_control(runstage)
+    run_process_control(runstage, DEFAULT_DB_FILE)
 
     
