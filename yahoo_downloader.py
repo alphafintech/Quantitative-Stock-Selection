@@ -72,6 +72,9 @@ def _insert_price_df(cur: sqlite3.Cursor, df: pd.DataFrame, ticker: str) -> None
         logger.info("Ticker %s: 'adj_close' column missing; using 'close' as fallback", ticker)
         df["adj_close"] = df["close"]
 
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+
     df["ticker"] = ticker
 
     # Drop duplicate column names if any (can occur with multi-indexed DataFrames)
@@ -155,6 +158,7 @@ def download_price_data(
                         group_by="ticker",
                         progress=False,
                         threads=False,
+                        auto_adjust=False,
                     )
                 except Exception as exc:
                     logger.exception("[Batch %d] download error", bidx)
@@ -167,6 +171,7 @@ def download_price_data(
                         group_by="ticker",
                         progress=False,
                         threads=False,
+                        auto_adjust=False,
                     )
 
                 for tk in batch:
@@ -294,6 +299,10 @@ def _download_single_ticker(ticker: str):
     q_bal = _safe_get(lambda: yf_tic.quarterly_balance_sheet)
     q_cf = _safe_get(lambda: yf_tic.quarterly_cashflow)
     if not q_inc.empty:
+        q_union_idx = q_inc.index.union(q_bal.index).union(q_cf.index)
+        q_inc = q_inc.reindex(q_union_idx)
+        q_bal = q_bal.reindex(q_union_idx)
+        q_cf = q_cf.reindex(q_union_idx)
         results.append(("Q", q_inc, q_bal, q_cf))
     a_inc = _safe_get(lambda: yf_tic.income_stmt)
     a_bal = _safe_get(lambda: yf_tic.balance_sheet)
