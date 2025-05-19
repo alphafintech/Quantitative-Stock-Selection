@@ -12,10 +12,7 @@
 # --- Gemini 流程 ---
 - 运行完整 Gemini 流程:
   python Run_complete_program.py
-- 跳过 Gemini 趋势数据更新:
-  python Run_complete_program.py --skip-Gemini-trend-data-update
-- 跳过 Gemini 增长数据更新:
-  python Run_complete_program.py --skip-Gemini-growth-data-update
+
 - 跳过 Gemini 最终筛选:
   python Run_complete_program.py --skip-Gemini-screening
 - 完全跳过 Gemini 流程:
@@ -26,13 +23,12 @@
   python Run_complete_program.py
 - 跳过 GPT 流程:
   python Run_complete_program.py --skip-GPT
-- 运行 GPT 流程，但跳过趋势数据库更新:
-  python Run_complete_program.py --skip-GPT-trend-db-update
-- 运行 GPT 流程，但跳过财务数据库更新:
-  python Run_complete_program.py --skip-GPT-finance-db-update
-- 运行 GPT 流程，跳过所有数据库更新:
-  python Run_complete_program.py --skip-GPT-trend-db-update --skip-GPT-finance-db-update
 
+# --- 数据下载 ---
+- 更新股价和财务数据后再运行:
+  python Run_complete_program.py --update-price-data --update-finance-data
+- 仅更新股价数据:
+  python Run_complete_program.py --update-price-data
 # --- 同时运行 (示例: 跳过 Gemini) ---
   python Run_complete_program.py --skip-Gemini
 """
@@ -47,6 +43,7 @@ import pandas as pd
 from pathlib import Path
 import configparser
 import datetime as dt
+import yahoo_downloader
 
 # --- 配置日志记录 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MainRunner] %(message)s')
@@ -131,17 +128,18 @@ def run_main_process():
     )
 
     # Gemini 控制参数
+    parser.add_argument(
+        '--update-price-data',
+        action='store_true',
+        help='在运行管道前下载/更新股价数据'
+    )
+    parser.add_argument(
+        '--update-finance-data',
+        action='store_true',
+        help='在运行管道前下载/更新财务数据'
+    )
+    # Gemini 控制参数
     gemini_group = parser.add_argument_group('Gemini Pipeline Control (默认执行, 除非 --skip-Gemini)')
-    gemini_group.add_argument(
-        '--skip-Gemini-trend-data-update',
-        action='store_true',
-        help="跳过 Gemini 趋势评分流程中的数据更新步骤。"
-    )
-    gemini_group.add_argument(
-        '--skip-Gemini-growth-data-update',
-        action='store_true',
-        help="跳过 Gemini 增长评分流程中的数据更新步骤。"
-    )
     gemini_group.add_argument(
         '--skip-Gemini-screening',
         action='store_true',
@@ -160,35 +158,32 @@ def run_main_process():
         action='store_true',
         help="完全跳过 GPT 流程（默认执行）。"
     )
-    gpt_group.add_argument(
-        '--skip-GPT-trend-db-update',
-        action='store_true',
-        help="跳过 GPT 流程中的趋势数据库更新 (传递 update_trend_db=False)。"
-    )
-    gpt_group.add_argument(
-        '--skip-GPT-finance-db-update',
-        action='store_true',
-        help="跳过 GPT 流程中的财务数据库更新 (传递 update_finance_db=False)。"
-    )
+
 
     args = parser.parse_args()
+    if args.update_price_data:
+        logging.info("--- 下载/更新股价数据 ---")
+        yahoo_downloader.download_price_data()
+
+    if args.update_finance_data:
+        logging.info("--- 下载/更新财务数据 ---")
+        yahoo_downloader.download_financial_data()
+
 
     # --- 执行 Gemini 流程 (如果可用且未被跳过) ---
     if GEMINI_AVAILABLE and not args.skip_Gemini:
         
-        run_gemini_trend_data_update = not args.skip_Gemini_trend_data_update
-        run_gemini_growth_data_update = not args.skip_Gemini_growth_data_update
         run_gemini_screening = not args.skip_Gemini_screening
 
         logging.info("--- 开始执行主流程 (Gemini) ---")
-        logging.info(f"Gemini 参数: run_trend_data_update={run_gemini_trend_data_update}, run_growth_data_update={run_gemini_growth_data_update}, run_final_screening={run_gemini_screening}")
+        logging.info(f"Gemini 参数: run_trend_data_update=False, run_growth_data_update=False, run_final_screening={run_gemini_screening}")
 
         start_time_gemini = time.time()
         try:
             change_working_directory(Gemini_dir)
             gemini_main_pipeline(
-                run_trend_data_update=run_gemini_trend_data_update,
-                run_growth_data_update=run_gemini_growth_data_update,
+                run_trend_data_update=False,
+                run_growth_data_update=False,
                 run_final_screening=run_gemini_screening
             )
             logging.info("--- 主流程 (Gemini) 执行完毕 ---")
@@ -208,20 +203,19 @@ def run_main_process():
 
     # --- 执行 GPT 流程 (如果可用且未被跳过) ---
     if GPT_AVAILABLE and not args.skip_GPT:
-        update_trend_db_gpt = not args.skip_GPT_trend_db_update
-        update_finance_db_gpt = not args.skip_GPT_finance_db_update
-        recalc_scores_gpt = True # 固定为 True
+        recalc_scores_gpt = True  # 固定为 True
         do_selection_gpt = True  # 固定为 True
 
         logging.info("--- 开始执行主流程 (GPT) ---")
-        logging.info(f"GPT 参数: update_trend_db={update_trend_db_gpt}, update_finance_db={update_finance_db_gpt}, recalc_scores={recalc_scores_gpt}, do_selection={do_selection_gpt}")
-
+        logging.info(
+            f"GPT 参数: update_trend_db=False, update_finance_db=False, recalc_scores={recalc_scores_gpt}, do_selection={do_selection_gpt}"
+        )     
         start_time_gpt = time.time()
         try:
             change_working_directory(GPT_dir)
             gpt_run_pipeline(
-                update_trend_db=update_trend_db_gpt,
-                update_finance_db=update_finance_db_gpt,
+                update_trend_db=False,
+                update_finance_db=False,
                 recalc_scores=recalc_scores_gpt,
                 do_selection=do_selection_gpt
             )
@@ -549,14 +543,18 @@ def test_main_process():
     """
     try:
         # 先测试 Gemini
+        yahoo_downloader.download_price_data()
+        yahoo_downloader.download_financial_data()
+
+        # 先测试 Gemini
         change_working_directory(Gemini_dir)
-        gemini_main_pipeline(True, False, True)
+        gemini_main_pipeline(False, False, True)
 
         # 再测试 GPT（若成功导入）
         if GPT_AVAILABLE:
             change_working_directory(GPT_dir)
             gpt_run_pipeline(
-                update_trend_db=True,
+                update_trend_db=False,
                 update_finance_db=False,
                 recalc_scores=True,
                 do_selection=True
@@ -574,8 +572,8 @@ def test_main_process():
 # --- 主执行逻辑 ---
 if __name__ == "__main__":
     overall_start_time = time.time()
-    run_main_process() # 调用封装好的主流程函数
-    #test_main_process() # 调用测试函数
+    #run_main_process() # 调用封装好的主流程函数
+    test_main_process() # 调用测试函数
     generate_prompt_Gemini()
     generate_prompt_GPT()
     overall_end_time = time.time()
