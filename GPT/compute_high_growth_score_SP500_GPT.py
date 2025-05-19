@@ -24,10 +24,20 @@ from tqdm import tqdm
 
 
 def _get_finance_db(cfg_path: str = "config.ini") -> str:
-    """Return finance DB path from config or default."""
+    """Return finance DB path from config or default.
+
+    When executed from a subdirectory, ``cfg_path`` may not be found in
+    the current working directory. This helper also checks for the file
+    relative to this script so that database paths resolve correctly.
+    """
     cfg = configparser.ConfigParser()
-    if os.path.exists(cfg_path):
-        cfg.read(cfg_path)
+    path = Path(cfg_path)
+    if not path.exists():
+        alt = Path(__file__).resolve().parent.parent / cfg_path
+        if alt.exists():
+            path = alt
+    if path.exists():
+        cfg.read(path)
     return cfg.get("database", "finance_db", fallback="SP500_finance_data.db")
 
 
