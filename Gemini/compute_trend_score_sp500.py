@@ -738,7 +738,12 @@ def calculate_all_indicators(conn):
             # --- Indicator calculations finished ---
 
             # --- Prepare Data for Database Update ---
-            df_ticker.reset_index(inplace=True) # Get Date column back
+            # Ensure index name so reset_index() produces a 'Date' column
+            if df_ticker.index.name != "Date":
+                df_ticker.index.name = "Date"
+            df_ticker.reset_index(inplace=True)
+            if "Date" not in df_ticker.columns and "index" in df_ticker.columns:
+                df_ticker.rename(columns={"index": "Date"}, inplace=True)
 
             # Select columns that were *actually* calculated and expected to be stored
             # Use the definitive list from generated_columns config
@@ -995,7 +1000,9 @@ def calculate_and_save_trend_scores(conn):
                  continue
 
             # Reverse to get chronological order for rolling calculations
-            df_ticker = df_ticker.iloc[::-1].reset_index(drop=True)
+            df_ticker = df_ticker.iloc[::-1].reset_index()
+            if "Date" not in df_ticker.columns and "index" in df_ticker.columns:
+                df_ticker.rename(columns={"index": "Date"}, inplace=True)
 
             # Calculate OBV SMA
             obv_sma_col_name = gc['obv_sma']
