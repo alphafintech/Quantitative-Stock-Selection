@@ -23,6 +23,14 @@ import sqlalchemy
 from tqdm import tqdm
 
 
+def _get_finance_db(cfg_path: str = "config.ini") -> str:
+    """Return finance DB path from config or default."""
+    cfg = configparser.ConfigParser()
+    if os.path.exists(cfg_path):
+        cfg.read(cfg_path)
+    return cfg.get("database", "finance_db", fallback="SP500_finance_data.db")
+
+
 # ══════════════════ CONFIG ═══════════════════════════════════
 CONFIG_FILE = Path(__file__).with_name("config_finance.ini")
 DEFAULT_CONFIG = """[data]
@@ -90,7 +98,7 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("sp500-growth")
 
 # ═════════════ GLOBAL PARAMS ═════════════════════════════════
-DB_PATH  = Path(CFG["database"]["db_name"])
+DB_PATH  = Path(CFG["database"].get("db_name", _get_finance_db()))
 engine   = create_engine(f"sqlite:///{DB_PATH}")
 START_DATE = pd.to_datetime(CFG["data"]["start_date"])
 END_DATE   = pd.to_datetime(CFG["data"].get("end_date")) if CFG["data"].get("end_date") else pd.Timestamp.today()

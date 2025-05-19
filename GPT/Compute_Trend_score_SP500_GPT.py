@@ -14,8 +14,16 @@ import yfinance as yf
 import time
 
 
+def _get_price_db(cfg_path: str = "config.ini") -> str:
+    """Return price DB path from config or default."""
+    cfg = configparser.ConfigParser()
+    if os.path.exists(cfg_path):
+        cfg.read(cfg_path)
+    return cfg.get("database", "price_db", fallback="SP500_price_data.db")
+
+
 # Default database storing historical price data
-DEFAULT_DB_FILE = "SP500_price_data.db"
+DEFAULT_DB_FILE = _get_price_db()
 config_file = "config_trend.ini"
 
 
@@ -1186,6 +1194,6 @@ if __name__ == '__main__':
     cfg.read(config_file)
     runstage = int(cfg.get("run_control", "runstage", fallback="0"))
     print(f"[Main] runstage = {runstage}")
-    run_process_control(runstage, DEFAULT_DB_FILE)
+    run_process_control(runstage, _get_price_db())
 
     

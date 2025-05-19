@@ -32,6 +32,13 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 import math
 
+
+def _get_price_db(cfg_path: str = "config.ini") -> str:
+    cfg = configparser.ConfigParser()
+    if os.path.exists(cfg_path):
+        cfg.read(cfg_path)
+    return cfg.get("database", "price_db", fallback="SP500_price_data.db")
+
 # Ensure openpyxl is installed for Excel export
 try:
     import openpyxl
@@ -130,7 +137,7 @@ def load_configuration(config_file='config.ini'):
 
     # Database
     db_conf = CONFIG.setdefault('database', {})
-    db_conf['db_file'] = db_conf.get('db_file', 'SP500_price_data.db')
+    db_conf['db_file'] = db_conf.get('db_file') or _get_price_db()
     db_conf['main_table'] = db_conf.get('main_table', 'stock_data')
     db_conf['latest_analysis_table'] = db_conf.get('latest_analysis_table', 'latest_analysis')
 
@@ -1237,7 +1244,7 @@ def compute_trend_score(db_path: str | None = None):
         return # Exit on other loading errors
 
     # Establish database connection
-    db_file_path = db_path or CONFIG.get('database', {}).get('db_file', 'SP500_price_data.db')
+    db_file_path = db_path or CONFIG.get('database', {}).get('db_file') or _get_price_db()
     if not db_file_path:
         logging.error("配置中未指定数据库文件路径 (database -> db_file)。")
         return
