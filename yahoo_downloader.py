@@ -68,7 +68,15 @@ def _insert_price_df(cur: sqlite3.Cursor, df: pd.DataFrame, ticker: str) -> None
         "Volume": "volume",
     }
     df.rename(columns=rename, inplace=True)
+    if "adj_close" not in df.columns and "close" in df.columns:
+        logger.info("Ticker %s: 'adj_close' column missing; using 'close' as fallback", ticker)
+        df["adj_close"] = df["close"]
+
     df["ticker"] = ticker
+
+    # Drop duplicate column names if any (can occur with multi-indexed DataFrames)
+    df = df.loc[:, ~df.columns.duplicated()]
+
     df = df[["ticker", "date", "open", "high", "low", "close", "adj_close", "volume"]]
     for row in df.itertuples(index=False):
         cur.execute(
