@@ -129,11 +129,15 @@ def download_price_data(
 
         batch_size = 50
         total_batches = (len(tickers) + batch_size - 1) // batch_size
+        processed = 0
         for bidx, i in enumerate(range(0, len(tickers), batch_size), start=1):
             batch = tickers[i : i + batch_size]
-            min_start = min(
-                s for s in [ticker_start[tk] for tk in batch] if s is not None
-            ) if any(ticker_start[tk] for tk in batch) else end_date
+            logger.info("Downloading batch %d/%d", bidx, total_batches)
+            min_start = (
+                min(s for s in [ticker_start[tk] for tk in batch] if s is not None)
+                if any(ticker_start[tk] for tk in batch)
+                else end_date
+            )
             try:
                 df_all = yf.download(
                     batch,
@@ -144,7 +148,8 @@ def download_price_data(
                     threads=False,
                 )
             except Exception as exc:
-                logger.info("[Batch] error %s; retrying after 60s", exc)
+                logger.exception("[Batch %d] download error", bidx)
+                logger.info("Retrying after 60s")
                 time.sleep(60)
                 df_all = yf.download(
                     batch,
@@ -157,17 +162,23 @@ def download_price_data(
 
             for tk in batch:
                 start = ticker_start[tk]
+                logger.info("Processing %s (%d/%d)", tk, processed + 1, len(tickers))
                 if start is None:
                     logger.info("%s already up to date", tk)
+                    processed += 1
                     continue
                 if tk not in df_all.columns.get_level_values(0):
                     logger.info("[Batch] no data for %s", tk)
+                    processed += 1
                     continue
                 df_single = df_all[tk].dropna(how="all")
                 if df_single.empty:
+                    processed += 1
                     continue
                 df_single = df_single[df_single.index >= start]
                 _insert_price_df(cur, df_single, tk)
+                logger.debug("Stored %d rows for %s", len(df_single), tk)
+                processed += 1
             conn.commit()
             logger.info("Processed batch %d/%d", bidx, total_batches)
             time.sleep(1)
