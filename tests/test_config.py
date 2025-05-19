@@ -4,11 +4,10 @@ import sys, types
 
 # Stub heavy dependencies so we can import run_complete_process without
 # requiring optional packages like pandas.
-sys.modules.setdefault(
-    "GPT.Compute_Trend_socre_SP500_GPT",
-    types.ModuleType("GPT.Compute_Trend_socre_SP500_GPT"),
-)
-sys.modules["GPT.Compute_Trend_socre_SP500_GPT"].run_process_control = lambda *a, **k: None
+# Some environments may lack pandas; stub out modules that require heavy deps.
+for mod_name in ["GPT.Compute_Trend_score_SP500_GPT", "GPT.Compute_Trend_socre_SP500_GPT"]:
+    sys.modules.setdefault(mod_name, types.ModuleType(mod_name))
+    sys.modules[mod_name].run_process_control = lambda *a, **k: None
 
 sys.modules.setdefault(
     "GPT.compute_high_growth_score_SP500_GPT",
