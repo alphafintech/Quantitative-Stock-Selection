@@ -110,78 +110,81 @@ def download_price_data(
         if not end_date:
             end_date = datetime.date.today().strftime("%Y-%m-%d")
 
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
-        _ensure_price_schema(conn)
-        cur = conn.cursor()
-        tickers = _get_sp500_tickers()
+    try:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(db_path) as conn:
+            _ensure_price_schema(conn)
+            cur = conn.cursor()
+            tickers = _get_sp500_tickers()
 
-        ticker_start: Dict[str, str] = {}
-        for tk in tickers:
-            last = _latest_price_date(cur, tk)
-            if last is not None:
-                start = (last + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-                if start > end_date:
-                    start = None
-            else:
-                start = start_date
-            ticker_start[tk] = start
+            ticker_start: Dict[str, str] = {}
+            for tk in tickers:
+                last = _latest_price_date(cur, tk)
+                if last is not None:
+                    start = (last + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                    if start > end_date:
+                        start = None
+                else:
+                    start = start_date
+                ticker_start[tk] = start
 
-        batch_size = 50
-        total_batches = (len(tickers) + batch_size - 1) // batch_size
-        processed = 0
-        for bidx, i in enumerate(range(0, len(tickers), batch_size), start=1):
-            batch = tickers[i : i + batch_size]
-            logger.info("Downloading batch %d/%d", bidx, total_batches)
-            min_start = (
-                min(s for s in [ticker_start[tk] for tk in batch] if s is not None)
-                if any(ticker_start[tk] for tk in batch)
-                else end_date
-            )
-            try:
-                df_all = yf.download(
-                    batch,
-                    start=min_start,
-                    end=end_date,
-                    group_by="ticker",
-                    progress=False,
-                    threads=False,
+            batch_size = 50
+            total_batches = (len(tickers) + batch_size - 1) // batch_size
+            processed = 0
+            for bidx, i in enumerate(range(0, len(tickers), batch_size), start=1):
+                batch = tickers[i : i + batch_size]
+                logger.info("Downloading batch %d/%d", bidx, total_batches)
+                min_start = (
+                    min(s for s in [ticker_start[tk] for tk in batch] if s is not None)
+                    if any(ticker_start[tk] for tk in batch)
+                    else end_date
                 )
-            except Exception as exc:
-                logger.exception("[Batch %d] download error", bidx)
-                logger.info("Retrying after 60s")
-                time.sleep(60)
-                df_all = yf.download(
-                    batch,
-                    start=min_start,
-                    end=end_date,
-                    group_by="ticker",
-                    progress=False,
-                    threads=False,
-                )
+                try:
+                    df_all = yf.download(
+                        batch,
+                        start=min_start,
+                        end=end_date,
+                        group_by="ticker",
+                        progress=False,
+                        threads=False,
+                    )
+                except Exception as exc:
+                    logger.exception("[Batch %d] download error", bidx)
+                    logger.info("Retrying after 60s")
+                    time.sleep(60)
+                    df_all = yf.download(
+                        batch,
+                        start=min_start,
+                        end=end_date,
+                        group_by="ticker",
+                        progress=False,
+                        threads=False,
+                    )
 
-            for tk in batch:
-                start = ticker_start[tk]
-                logger.info("Processing %s (%d/%d)", tk, processed + 1, len(tickers))
-                if start is None:
-                    logger.info("%s already up to date", tk)
+                for tk in batch:
+                    start = ticker_start[tk]
+                    logger.info("Processing %s (%d/%d)", tk, processed + 1, len(tickers))
+                    if start is None:
+                        logger.info("%s already up to date", tk)
+                        processed += 1
+                        continue
+                    if tk not in df_all.columns.get_level_values(0):
+                        logger.info("[Batch] no data for %s", tk)
+                        processed += 1
+                        continue
+                    df_single = df_all[tk].dropna(how="all")
+                    if df_single.empty:
+                        processed += 1
+                        continue
+                    df_single = df_single[df_single.index >= start]
+                    _insert_price_df(cur, df_single, tk)
+                    logger.debug("Stored %d rows for %s", len(df_single), tk)
                     processed += 1
-                    continue
-                if tk not in df_all.columns.get_level_values(0):
-                    logger.info("[Batch] no data for %s", tk)
-                    processed += 1
-                    continue
-                df_single = df_all[tk].dropna(how="all")
-                if df_single.empty:
-                    processed += 1
-                    continue
-                df_single = df_single[df_single.index >= start]
-                _insert_price_df(cur, df_single, tk)
-                logger.debug("Stored %d rows for %s", len(df_single), tk)
-                processed += 1
-            conn.commit()
-            logger.info("Processed batch %d/%d", bidx, total_batches)
-            time.sleep(1)
+                conn.commit()
+                logger.info("Processed batch %d/%d", bidx, total_batches)
+                time.sleep(1)
+    except Exception as exc:  # catch-all so caller doesn't fail
+        logger.exception("download_price_data failed: %s", exc)
 
 
 # -----------------------------------------------------------------------------
