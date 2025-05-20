@@ -12,6 +12,8 @@ class TrendPipelineFailureTest(unittest.TestCase):
     def setUp(self):
         # Temporary directory for config files
         self.tmpdir = Path(tempfile.mkdtemp())
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.created_files = []
 
         # Create stub module for heavy dependency
         stub = types.ModuleType("Gemini.compute_trend_score_sp500")
@@ -50,6 +52,9 @@ class TrendPipelineFailureTest(unittest.TestCase):
     def tearDown(self):
         import shutil
         shutil.rmtree(self.tmpdir)
+        for f in self.created_files:
+            if f.exists():
+                f.unlink()
         sys.modules.pop("Gemini.compute_trend_score_sp500", None)
         # Remove imported module so next tests get a clean state
         sys.modules.pop("Gemini.run_sp500_processing", None)
@@ -85,6 +90,25 @@ class TrendPipelineFailureTest(unittest.TestCase):
             do_calculate_trend_score=False,
         )
         self.assertFalse(res)
+
+    def test_relative_db_path_resolved(self):
+        price_name = "rel_price.db"
+        price_path = self.repo_root / price_name
+        sqlite3.connect(price_path).close()
+        self.created_files.append(price_path)
+
+        ind_path = self.tmpdir / "indicator.db"
+        cfg = self._write_cfg(
+            f"""[database]\ndb_file = {price_name}\nindicator_db_file = {ind_path}\n"""
+        )
+        res = self.module.run_trend_score_pipeline(
+            config_file=str(cfg),
+            do_update_data=True,
+            do_calculate_indicators=False,
+            do_calculate_trend_score=False,
+        )
+        self.assertTrue(res)
+        self.assertTrue(ind_path.exists())
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

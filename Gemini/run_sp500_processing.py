@@ -253,7 +253,19 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
             print("Error: Database file path not found in trend configuration.")
             pipeline_successful = False
             return
+        # Resolve price DB path similar to create_connection
+        price_db_path = price_db
+        if not os.path.isabs(price_db_path):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(script_dir)
+            price_db_path = os.path.join(project_root, price_db_path)
+
         logging.info(f"Using indicator database file: {indicator_db}")
+
+        if not os.path.exists(price_db_path):
+            logging.error(f"Price database '{price_db_path}' does not exist.")
+            pipeline_successful = False
+            return
 
         # If requested, remove existing indicator database
         if do_update_data:
@@ -268,7 +280,7 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
         if not os.path.exists(indicator_db):
             try:
                 os.makedirs(os.path.dirname(indicator_db), exist_ok=True)
-                shutil.copy2(price_db, indicator_db)
+                shutil.copy2(price_db_path, indicator_db)
                 logging.info(f"Copied price DB to indicator DB: {indicator_db}")
             except Exception as e:
                 logging.error(f"无法创建指标数据库 '{indicator_db}': {e}")
