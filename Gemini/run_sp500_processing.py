@@ -251,7 +251,8 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
         if not price_db:
             logging.critical("Database file path not found in trend configuration.")
             print("Error: Database file path not found in trend configuration.")
-            return False
+            pipeline_successful = False
+            return
         logging.info(f"Using indicator database file: {indicator_db}")
 
         # If requested, remove existing indicator database
@@ -271,7 +272,8 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
                 logging.info(f"Copied price DB to indicator DB: {indicator_db}")
             except Exception as e:
                 logging.error(f"无法创建指标数据库 '{indicator_db}': {e}")
-                return False
+                pipeline_successful = False
+                return
 
         TREND_CONFIG['database']['db_file'] = indicator_db
 
@@ -280,7 +282,8 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
         if not conn:
             logging.critical("Failed to establish database connection for trend pipeline.")
             print("Error: Failed to establish database connection for trend pipeline.")
-            return False
+            pipeline_successful = False
+            return
         logging.info("Database connection established.")
 
         # 3. Ensure Tables Exist
