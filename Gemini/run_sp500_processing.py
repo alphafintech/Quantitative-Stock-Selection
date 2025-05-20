@@ -214,15 +214,14 @@ def save_results(df_weighted, df_threshold, output_dir, filename):
 
 # --- Pipeline Functions ---
 
-def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True, do_calculate_indicators=True, do_calculate_trend_score=True):
+def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_calculate_indicators=True, do_calculate_trend_score=True):
     """
-    Runs the data update, indicator calculation, and trend score calculation steps.
-    Uses functions imported from compute_trend_score_sp500.py.
-    Accepts parameters to control which steps are executed.
+    Runs the indicator calculation and trend score calculation steps.
+    The indicator database is recreated from ``price_db`` every run and no
+    data update is performed.
 
     Args:
         config_file (str): Path to the configuration file for trend calculations.
-        do_update_data (bool): If True, run the data download/update step.
         do_calculate_indicators (bool): If True, run the indicator calculation step.
         do_calculate_trend_score (bool): If True, run the trend score calculation step.
 
@@ -232,7 +231,7 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
     pipeline_start_time = time.time()
     logging.info(f"--- Starting Trend Score Pipeline --- Config: '{config_file}' ---")
     print(f"\n--- Starting Trend Score Pipeline ---")
-    print(f"Parameters: UpdateData={do_update_data}, CalcIndicators={do_calculate_indicators}, CalcTrendScore={do_calculate_trend_score}")
+    print(f"Parameters: CalcIndicators={do_calculate_indicators}, CalcTrendScore={do_calculate_trend_score}")
 
     conn = None
     pipeline_successful = True
@@ -267,25 +266,21 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
             pipeline_successful = False
             return
 
-        # If requested, remove existing indicator database
-        if do_update_data:
-            if os.path.exists(indicator_db):
-                try:
-                    os.remove(indicator_db)
-                except PermissionError:
-                    logging.error(f"无法删除数据库 {indicator_db}，文件可能被占用。")
-                    raise
-
-        # Ensure indicator database exists
-        if not os.path.exists(indicator_db):
+        # Recreate indicator database from the price database every run
+        if os.path.exists(indicator_db):
             try:
-                os.makedirs(os.path.dirname(indicator_db), exist_ok=True)
-                shutil.copy2(price_db_path, indicator_db)
-                logging.info(f"Copied price DB to indicator DB: {indicator_db}")
-            except Exception as e:
-                logging.error(f"无法创建指标数据库 '{indicator_db}': {e}")
-                pipeline_successful = False
-                return
+                os.remove(indicator_db)
+            except PermissionError:
+                logging.error(f"无法删除数据库 {indicator_db}，文件可能被占用。")
+                raise
+        try:
+            os.makedirs(os.path.dirname(indicator_db), exist_ok=True)
+            shutil.copy2(price_db_path, indicator_db)
+            logging.info(f"Copied price DB to indicator DB: {indicator_db}")
+        except Exception as e:
+            logging.error(f"无法创建指标数据库 '{indicator_db}': {e}")
+            pipeline_successful = False
+            return
 
         TREND_CONFIG['database']['db_file'] = indicator_db
 
@@ -303,21 +298,9 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
         create_tables(conn)
         logging.info("Database tables checked/created.")
 
-        # --- Step 4: Data Update ---
-        if do_update_data:
-            step_start = time.time()
-            logging.info("--- Running Data Update ---")
-            print("--- Running Data Update ---")
-            update_success = update_stock_data(conn) # Call imported function
-            if not update_success:
-                logging.warning("Data update step reported potential issues.")
-                # Decide if this is critical
-                # pipeline_successful = False
-            logging.info(f"--- Data Update finished (Duration: {time.time() - step_start:.2f}s) ---")
-            print(f"--- Data Update finished (Duration: {time.time() - step_start:.2f}s) ---")
-        else:
-            logging.info("--- Skipping Data Update ---")
-            print("--- Skipping Data Update ---")
+        # --- Step 4: Data Update --- (skipped)
+        logging.info("--- Skipping Data Update (database copied from price_db) ---")
+        print("--- Skipping Data Update (database copied from price_db) ---")
 
         # --- Step 5: Indicator Calculation ---
         if do_calculate_indicators:
@@ -387,13 +370,13 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
         return pipeline_successful
 
 # MODIFIED: compute_trend_score now accepts parameters for finer control
-def compute_trend_score(update_data=True, calculate_indicators=True, calculate_score=True):
+def compute_trend_score(calculate_indicators=True, calculate_score=True):
     """
     Wrapper function to configure and run the trend score pipeline.
-    Accepts parameters to control which steps are executed.
+    The indicator database is always recreated from ``price_db`` so there is no
+    separate data update step.
 
     Args:
-        update_data (bool): If True, run the data download/update step.
         calculate_indicators (bool): If True, run the indicator calculation step.
         calculate_score (bool): If True, run the trend score calculation step.
 
@@ -406,7 +389,6 @@ def compute_trend_score(update_data=True, calculate_indicators=True, calculate_s
     # Pass the control parameters down to the pipeline runner
     success = run_trend_score_pipeline(
         config_file=CONFIG_FILE_TREND,
-        do_update_data=update_data,
         do_calculate_indicators=calculate_indicators,
         do_calculate_trend_score=calculate_score
     )
@@ -544,13 +526,11 @@ def final_screen():
 
 
 # CORRECTED: Main pipeline function encapsulating the steps
-def main_pipeline(run_trend_data_update=True, run_growth_data_update=True, run_final_screening=True):
+def main_pipeline(run_growth_data_update=True, run_final_screening=True):
     """
     Orchestrates the entire S&P 500 processing pipeline.
 
     Args:
-        run_trend_data_update (bool): Controls ONLY if data update runs for the trend score part.
-                                      Indicator and score calculations will still run.
         run_growth_data_update (bool): Controls if data update runs for the growth score part.
         run_final_screening (bool): Controls if the final screening step runs.
     """
@@ -559,19 +539,17 @@ def main_pipeline(run_trend_data_update=True, run_growth_data_update=True, run_f
     print("=============================================")
     print("=== Starting S&P 500 Processing Script ===")
     print("=============================================")
-    print(f"Run Control: Update Trend Data = {run_trend_data_update}, Update Growth Data = {run_growth_data_update}, Run Screening = {run_final_screening}")
+    print(f"Run Control: Update Growth Data = {run_growth_data_update}, Run Screening = {run_final_screening}")
 
     overall_success = True
 
     # Step 1: Compute Trend Score
-    # Always run the calculation steps (indicators, score)
-    # Only control the data update part via run_trend_data_update
+    # Indicators and scores are always calculated using the latest price data
     print("\nSTEP 1: Computing Trend Score (Indicators, Score)...")
     trend_success = compute_trend_score(
-        update_data=run_trend_data_update, # Pass the specific flag for data update
-        calculate_indicators=True,         # Always calculate indicators
-        calculate_score=True               # Always calculate score
-        )
+        calculate_indicators=True,  # Always calculate indicators
+        calculate_score=True        # Always calculate score
+    )
 
     if not trend_success:
         print("\nERROR: Trend score computation failed. Aborting further steps.")
@@ -635,7 +613,6 @@ def main_pipeline(run_trend_data_update=True, run_growth_data_update=True, run_f
 
 def test_main():
     main_pipeline(
-        False, # Controls only data update part of trend step
         False,
         True
     )
@@ -645,12 +622,6 @@ def test_main():
 if __name__ == "__main__":
     # Set up command-line argument parsing
     parser = argparse.ArgumentParser(description="Run S&P 500 processing pipeline.")
-    # CORRECTED: Renamed flag for clarity
-    parser.add_argument(
-        '--skip-trend-data-update', # Renamed flag
-        action='store_true',
-        help="Skip ONLY the data download step within the trend score calculation (indicators and scores will still be calculated)."
-    )
     parser.add_argument(
         '--skip-growth-data-update', # Keep this name
         action='store_true',
@@ -670,7 +641,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Determine run parameters based on arguments
-    run_trend_data = not args.skip_trend_data_update # Controls ONLY data update in trend step
     run_growth_data = not args.skip_growth_data_update
     run_screen = not args.skip_screening
     # run_trend_calculation = not args.skip_trend_calculation # If using the extra flag
@@ -678,7 +648,7 @@ if __name__ == "__main__":
     # Call the main pipeline function with determined parameters
     # If you add --skip-trend-calculation, you would add an outer if condition here:
     # if run_trend_calculation:
-    #      main_pipeline(run_trend_data_update=run_trend_data, ...)
+    #      main_pipeline(...)
     # else:
     #      # Call main_pipeline, but maybe skip trend step entirely or handle differently
     #      print("Skipping entire Trend Calculation Step")
@@ -686,7 +656,6 @@ if __name__ == "__main__":
 
     # Current implementation based on existing flags:
     main_pipeline(
-        run_trend_data_update=run_trend_data, # Controls only data update part of trend step
         run_growth_data_update=run_growth_data,
         run_final_screening=run_screen
     )
