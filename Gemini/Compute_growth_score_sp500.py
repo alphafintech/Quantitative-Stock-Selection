@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from scipy.stats import linregress
 import os
+import shutil
 import warnings
 import sys
 
@@ -1122,22 +1123,25 @@ def calculate_final_score(df, config):
     logging.info("Finished calculating final scores.")
     return df
 # --- Main Execution Function (Modified) ---
-# MODIFIED: Added update_data parameter with default False and db_path override
-def compute_growth_score(update_data=False, db_path: str | None = None):
+# Database is copied from the project root so the original is never altered
+def compute_growth_score(db_path: str | None = None):
     """
     Main function to orchestrate the growth score calculation process.
 
     Args:
-        update_data (bool): If True, run the data download phase.
-                            If False, skip the data download phase.
-                            Defaults to True.
+        db_path (str | None): Optional path for the working copy of the finance
+            database. If omitted, the path from the finance configuration is
+            used.
     """
     run_start_time = time.time()
     try:
         config = load_config()
         log_level_setting = config.get('General', {}).get('log_level', 'INFO')
-        setup_logging(log_level_str=log_level_setting, log_to_file=config.get('General', {}).get('log_to_file', False))
-        logging.info(f"--- Growth Score Script Starting --- Update Data Flag: {update_data} ---")
+        setup_logging(
+            log_level_str=log_level_setting,
+            log_to_file=config.get('General', {}).get('log_to_file', False)
+        )
+        logging.info("--- Growth Score Script Starting ---")
 
     except (FileNotFoundError, ValueError, RuntimeError, KeyError) as e:
         print(f"CRITICAL CONFIGURATION ERROR: {e}")
@@ -1145,33 +1149,31 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
         return False
 
     data_cfg = config.get('Data', {})
-    inc_download = data_cfg.get('incremental_download', True)
 
     # --- Database Connection & Setup ---
     conn = None
     try:
-        db_name = db_path or data_cfg.get('db_name') or _get_finance_db()
-        conn = create_db_connection(db_name)
+        project_root = Path(__file__).resolve().parent.parent
+        src_db = Path(_get_finance_db(str(project_root / "config.ini")))
+        if not src_db.is_absolute():
+            src_db = project_root / src_db
+        src_db = src_db.resolve()
+
+        dest_name = db_path or data_cfg.get('db_name') or src_db.name
+        dest_path = Path(dest_name)
+        if not dest_path.is_absolute():
+            dest_path = Path(__file__).resolve().parent / dest_path
+        dest_path = dest_path.resolve()
+
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_db, dest_path)
+        logging.info(f"Copied finance database to {dest_path}")
+
+        conn = create_db_connection(str(dest_path))
         if not conn:
             logging.critical("Failed to establish database connection. Exiting.")
             return False
         create_tables(conn)
-
-        # Delete old data if full update requested
-        if update_data and not inc_download:
-            if os.path.exists(db_name):
-                try:
-                    # Example: Clear tables instead of deleting file
-                    cursor = conn.cursor()
-                    cursor.execute("DELETE FROM annual_financials;")
-                    cursor.execute("DELETE FROM quarterly_financials;")
-                    conn.commit()
-                    logging.info(f"Cleared tables in {db_name} for full reload.")
-                except (sqlite3.Error, PermissionError) as e:
-                    logging.error(f"Failed to clear tables in {db_name}: {e}")
-                    if conn:
-                        conn.close()
-                    return False  # Stop if clearing fails
 
     except (KeyError, OSError, sqlite3.Error) as e:
          logging.critical(f"Database setup/clearing error: {e}. Exiting.")
@@ -1201,26 +1203,8 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
             conn.close()
         return False
 
-    # --- Data Download Phase (Conditional) ---
-    if update_data:
-        logging.info("--- Starting Data Download Phase ---")
-        # Use tickers from the fetched list if available, otherwise maybe skip?
-        tickers_to_download = tickers if tickers_industries_dict else []
-        if not tickers_to_download:
-             logging.warning("No tickers available to download data for.")
-        else:
-            successful_downloads = 0
-            total_tickers = len(tickers_to_download)
-            for i, ticker in enumerate(tickers_to_download):
-                logging.info(f"Downloading data for {ticker} ({i+1}/{total_tickers})...")
-                try:
-                    download_data_for_ticker(ticker, config, conn)
-                    successful_downloads += 1
-                except Exception as e_download:
-                     logging.error(f"Error during download/save process for ticker {ticker}: {e_download}", exc_info=True)
-            logging.info(f"--- Finished Data Download Phase (Attempted: {total_tickers}, Successful Fetches (approx): {successful_downloads}) ---")
-    else:
-        logging.info("--- Skipping Data Download Phase based on 'update_data=False' ---")
+    # --- Data Processing and Scoring Phase ---
+    logging.info("--- Starting Data Processing and Scoring Phase ---")
 
     # --- Data Processing and Scoring Phase ---
     logging.info("--- Starting Data Processing and Scoring Phase ---")
@@ -1356,4 +1340,4 @@ def compute_growth_score(update_data=False, db_path: str | None = None):
 
 # --- Entry Point ---
 if __name__ == "__main__":
-    compute_growth_score(False)  # Example: default is not to update when run directly
+    compute_growth_score()
