@@ -472,6 +472,21 @@ def fetch_data_from_db(conn):
         quarterly_df.sort_values(by=['ticker', 'period'], inplace=True)
 
         logging.info(f"Fetched {len(annual_df)} annual & {len(quarterly_df)} quarterly records.")
+        # Extra debug information to help diagnose empty DataFrame issues
+        if annual_df.empty:
+            logging.debug("annual_financials table returned no rows.")
+        else:
+            logging.debug(
+                "Sample annual data:\n%s",
+                annual_df.head().to_string()
+            )
+        if quarterly_df.empty:
+            logging.debug("quarterly_financials table returned no rows.")
+        else:
+            logging.debug(
+                "Sample quarterly data:\n%s",
+                quarterly_df.head().to_string()
+            )
         return annual_df, quarterly_df
     except (pd.errors.DatabaseError, Exception) as e:
         logging.error(f"Error fetching data from DB: {e}", exc_info=True)
