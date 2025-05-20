@@ -31,6 +31,7 @@ import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
 import math
+import shutil
 
 
 def _get_price_db(cfg_path: str = "config.ini") -> str:
@@ -146,6 +147,9 @@ def load_configuration(config_file='config.ini'):
     db_conf['db_file'] = db_conf.get('db_file') or _get_price_db()
     db_conf['main_table'] = db_conf.get('main_table', 'stock_data')
     db_conf['latest_analysis_table'] = db_conf.get('latest_analysis_table', 'latest_analysis')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_indicator_db = os.path.join(script_dir, 'trend_analysis.db')
+    db_conf['indicator_db_file'] = db_conf.get('indicator_db_file', default_indicator_db)
 
     # Calculation Params
     cp_conf = CONFIG.setdefault('calculation_params', {})
@@ -1282,11 +1286,28 @@ def compute_trend_score(db_path: str | None = None):
         logging.error(f"加载配置时出错: {e_load}")
         return # Exit on other loading errors
 
-    # Establish database connection
-    db_file_path = db_path or CONFIG.get('database', {}).get('db_file') or _get_price_db()
-    if not db_file_path:
-        logging.error("配置中未指定数据库文件路径 (database -> db_file)。")
-        return
+    # Determine paths for price DB (source) and indicator DB (target)
+    price_db_path = CONFIG.get('database', {}).get('db_file') or _get_price_db()
+    indicator_db_path = db_path or CONFIG['database'].get('indicator_db_file')
+    if not indicator_db_path:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        indicator_db_path = os.path.join(script_dir, 'trend_analysis.db')
+
+    # Prepare indicator database by copying from price DB if needed
+    if not os.path.exists(indicator_db_path):
+        try:
+            if not os.path.exists(price_db_path):
+                logging.error(f"价格数据库 '{price_db_path}' 不存在，无法初始化指标数据库。")
+                return
+            os.makedirs(os.path.dirname(indicator_db_path), exist_ok=True)
+            shutil.copy2(price_db_path, indicator_db_path)
+            logging.info(f"已创建指标数据库: {indicator_db_path}")
+        except Exception as e:
+            logging.error(f"无法创建指标数据库 '{indicator_db_path}': {e}")
+            return
+
+    CONFIG['database']['db_file'] = indicator_db_path
+    db_file_path = indicator_db_path
     conn = create_connection(db_file_path)
     if conn is None:
         logging.error("无法连接到数据库。退出。")
