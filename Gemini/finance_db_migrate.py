@@ -28,36 +28,38 @@ CREATE TABLE IF NOT EXISTS quarterly_financials (
 
 INSERT_ANNUAL = """
 INSERT OR REPLACE INTO annual_financials
-SELECT ticker,
-       strftime('%Y', report_date) AS period,
-       total_revenue AS revenue,
-       net_income,
-       eps,
-       operating_income AS op_income,
-       total_assets - total_liabilities AS equity,
-       total_debt,
-       operating_cash_flow AS ocf,
-       capital_expenditures AS capex,
-       operating_income AS ebit,
-       interest_expense AS interest_exp
+SELECT
+    ticker,
+    strftime('%Y', report_date) AS period,
+    CAST(total_revenue AS REAL)            AS revenue,
+    CAST(net_income AS REAL)               AS net_income,
+    CAST(eps AS REAL)                      AS eps,
+    CAST(operating_income AS REAL)         AS op_income,
+    CAST(total_assets - total_liabilities AS REAL) AS equity,
+    CAST(total_debt AS REAL)               AS total_debt,
+    CAST(operating_cash_flow AS REAL)      AS ocf,
+    CAST(capital_expenditures AS REAL)     AS capex,
+    CAST(operating_income AS REAL)         AS ebit,
+    CAST(interest_expense AS REAL)         AS interest_exp
 FROM raw_financials
 WHERE period='A';
 """
 
 INSERT_QUARTERLY = """
 INSERT OR REPLACE INTO quarterly_financials
-SELECT ticker,
-       report_date AS period,
-       total_revenue AS revenue,
-       net_income,
-       eps,
-       operating_income AS op_income,
-       total_assets - total_liabilities AS equity,
-       total_debt,
-       operating_cash_flow AS ocf,
-       capital_expenditures AS capex,
-       operating_income AS ebit,
-       interest_expense AS interest_exp
+SELECT
+    ticker,
+    report_date AS period,
+    CAST(total_revenue AS REAL)            AS revenue,
+    CAST(net_income AS REAL)               AS net_income,
+    CAST(eps AS REAL)                      AS eps,
+    CAST(operating_income AS REAL)         AS op_income,
+    CAST(total_assets - total_liabilities AS REAL) AS equity,
+    CAST(total_debt AS REAL)               AS total_debt,
+    CAST(operating_cash_flow AS REAL)      AS ocf,
+    CAST(capital_expenditures AS REAL)     AS capex,
+    CAST(operating_income AS REAL)         AS ebit,
+    CAST(interest_expense AS REAL)         AS interest_exp
 FROM raw_financials
 WHERE period='Q';
 """
