@@ -576,8 +576,8 @@ def test_main_process():
 # --- 主执行逻辑 ---
 if __name__ == "__main__":
     overall_start_time = time.time()
-    #run_main_process() # 调用封装好的主流程函数
-    test_main_process() # 调用测试函数
+    run_main_process() # 调用封装好的主流程函数
+    #test_main_process() # 调用测试函数
     generate_prompt_Gemini()
     generate_prompt_GPT()
     overall_end_time = time.time()
