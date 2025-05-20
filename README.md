@@ -51,3 +51,6 @@ python Gemini/run_sp500_processing.py
 ```
 
 Ensure the file exists before attempting to generate Gemini prompts.
+
+Trend data indicators are always derived from existing price records. The
+previous `Gemini_skip_trend_data_update` configuration option has been removed.
