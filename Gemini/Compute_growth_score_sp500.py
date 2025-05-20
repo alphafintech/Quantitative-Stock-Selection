@@ -1174,6 +1174,12 @@ def compute_growth_score(db_path: str | None = None):
             logging.critical("Failed to establish database connection. Exiting.")
             return False
         create_tables(conn)
+        try:
+            from .finance_db_migrate import migrate_connection
+            if migrate_connection(conn):
+                logging.info("Database migrated from raw_financials table")
+        except Exception as e:
+            logging.error(f"Migration step failed: {e}")
 
     except (KeyError, OSError, sqlite3.Error) as e:
          logging.critical(f"Database setup/clearing error: {e}. Exiting.")

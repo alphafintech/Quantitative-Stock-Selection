@@ -54,3 +54,15 @@ Ensure the file exists before attempting to generate Gemini prompts.
 
 Trend data indicators are always derived from existing price records. The
 previous `Gemini_skip_trend_data_update` configuration option has been removed.
+
+### Finance database migration
+
+Historical versions stored raw statements in the table `raw_financials`. If your
+database only contains this table, run the migration script once to populate the
+new `annual_financials` and `quarterly_financials` summaries:
+
+```bash
+python -m Gemini.finance_db_migrate --config config.ini
+```
+
+The script does nothing when the target tables already contain data.
