@@ -176,13 +176,14 @@ def run_main_process():
         run_gemini_screening = not args.skip_Gemini_screening
 
         logging.info("--- 开始执行主流程 (Gemini) ---")
-        logging.info(f"Gemini 参数: run_trend_data_update=False, run_growth_data_update=False, run_final_screening={run_gemini_screening}")
+        logging.info(
+            f"Gemini 参数: run_growth_data_update=False, run_final_screening={run_gemini_screening}"
+        )
 
         start_time_gemini = time.time()
         try:
             change_working_directory(Gemini_dir)
             gemini_main_pipeline(
-                run_trend_data_update=False,
                 run_growth_data_update=False,
                 run_final_screening=run_gemini_screening
             )
