@@ -9,6 +9,7 @@ import pandas as pd
 import configparser
 import numpy as np
 import argparse # Added for command-line control
+import shutil
 
 
 
@@ -243,28 +244,39 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_update_data=True,
         TREND_CONFIG = load_trend_config(config_file)
         logging.info("Trend configuration loaded.")
 
-        # Get DB path from the loaded trend config
-        db_file = TREND_CONFIG.get('database', {}).get('db_file')
-        if not db_file:
+        # Determine database paths from configuration
+        db_conf = TREND_CONFIG.get('database', {})
+        price_db = db_conf.get('db_file')
+        indicator_db = db_conf.get('indicator_db_file', os.path.join(BASE_DIR, 'trend_analysis.db'))
+        if not price_db:
             logging.critical("Database file path not found in trend configuration.")
             print("Error: Database file path not found in trend configuration.")
             return False
-        logging.info(f"Using database file: {db_file}")
+        logging.info(f"Using indicator database file: {indicator_db}")
 
-        # 如果进行更新，则删除旧文件
+        # If requested, remove existing indicator database
         if do_update_data:
-            # 在调用前（且确保没有人连着数据库）
-            db_file = TREND_CONFIG['database']['db_file']
-            if os.path.exists(db_file):
+            if os.path.exists(indicator_db):
                 try:
-                    os.remove(db_file)
+                    os.remove(indicator_db)
                 except PermissionError:
-                    logging.error(f"无法删除数据库 {db_file}，文件可能被占用。")
+                    logging.error(f"无法删除数据库 {indicator_db}，文件可能被占用。")
                     raise
 
+        # Ensure indicator database exists
+        if not os.path.exists(indicator_db):
+            try:
+                os.makedirs(os.path.dirname(indicator_db), exist_ok=True)
+                shutil.copy2(price_db, indicator_db)
+                logging.info(f"Copied price DB to indicator DB: {indicator_db}")
+            except Exception as e:
+                logging.error(f"无法创建指标数据库 '{indicator_db}': {e}")
+                return False
+
+        TREND_CONFIG['database']['db_file'] = indicator_db
 
         # 2. Create Database Connection
-        conn = create_connection(db_file)
+        conn = create_connection(indicator_db)
         if not conn:
             logging.critical("Failed to establish database connection for trend pipeline.")
             print("Error: Failed to establish database connection for trend pipeline.")
