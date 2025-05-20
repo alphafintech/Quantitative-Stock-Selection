@@ -73,7 +73,6 @@ class TrendPipelineFailureTest(unittest.TestCase):
         )
         res = self.module.run_trend_score_pipeline(
             config_file=str(cfg),
-            do_update_data=True,
             do_calculate_indicators=False,
             do_calculate_trend_score=False,
         )
@@ -85,7 +84,6 @@ class TrendPipelineFailureTest(unittest.TestCase):
         )
         res = self.module.run_trend_score_pipeline(
             config_file=str(cfg),
-            do_update_data=True,
             do_calculate_indicators=False,
             do_calculate_trend_score=False,
         )
@@ -103,7 +101,6 @@ class TrendPipelineFailureTest(unittest.TestCase):
         )
         res = self.module.run_trend_score_pipeline(
             config_file=str(cfg),
-            do_update_data=True,
             do_calculate_indicators=False,
             do_calculate_trend_score=False,
         )
