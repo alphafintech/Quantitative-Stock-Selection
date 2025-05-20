@@ -33,7 +33,6 @@ try:
     )
     # Import the main function for Growth Score calculation
     # *** IMPORTANT: Assumes you have renamed 'Compute_growth_score_S&P500.py' to 'compute_growth_score_sp500.py' ***
-    # *** AND that compute_growth_score function is modified to accept 'update_data' parameter ***
     from .Compute_growth_score_sp500 import compute_growth_score
 
     # Optional: Check for pandas_ta dependency if needed directly here (unlikely)
@@ -530,12 +529,11 @@ def final_screen():
 
 
 # CORRECTED: Main pipeline function encapsulating the steps
-def main_pipeline(run_growth_data_update=True, run_final_screening=True):
+def main_pipeline(run_final_screening=True):
     """
     Orchestrates the entire S&P 500 processing pipeline.
 
     Args:
-        run_growth_data_update (bool): Controls if data update runs for the growth score part.
         run_final_screening (bool): Controls if the final screening step runs.
     """
 
@@ -543,7 +541,7 @@ def main_pipeline(run_growth_data_update=True, run_final_screening=True):
     print("=============================================")
     print("=== Starting S&P 500 Processing Script ===")
     print("=============================================")
-    print(f"Run Control: Update Growth Data = {run_growth_data_update}, Run Screening = {run_final_screening}")
+    print(f"Run Control: Run Screening = {run_final_screening}")
 
     overall_success = True
 
@@ -565,25 +563,11 @@ def main_pipeline(run_growth_data_update=True, run_final_screening=True):
         print("\nSTEP 2: Computing Growth Score...")
         try:
             # Call the imported function and capture success status
-            growth_success = compute_growth_score(update_data=run_growth_data_update)
-            print(
-                f"Growth score computation function executed (Update Data = {run_growth_data_update})."
-            )
+            growth_success = compute_growth_score()
+            print("Growth score computation function executed.")
             if not growth_success:
                 print("Growth score computation reported failure.")
                 overall_success = False
-        except TypeError as te:
-             # Catch error if compute_growth_score hasn't been modified yet
-             if 'update_data' in str(te):
-                 print("\nERROR: compute_growth_score() does not accept the 'update_data' argument.")
-                 print("Please modify the compute_growth_score function in compute_growth_score_sp500.py to accept and use this argument.")
-                 growth_success = False
-                 overall_success = False
-             else: # Other TypeError
-                 print(f"\nERROR: TypeError during growth score computation: {te}")
-                 traceback.print_exc()
-                 growth_success = False
-                 overall_success = False
         except Exception as e_growth:
             print(f"\nERROR: Growth score computation failed: {e_growth}")
             traceback.print_exc()
@@ -617,7 +601,6 @@ def main_pipeline(run_growth_data_update=True, run_final_screening=True):
 
 def test_main():
     main_pipeline(
-        False,
         True
     )
 #test_main()
@@ -626,11 +609,6 @@ def test_main():
 if __name__ == "__main__":
     # Set up command-line argument parsing
     parser = argparse.ArgumentParser(description="Run S&P 500 processing pipeline.")
-    parser.add_argument(
-        '--skip-growth-data-update', # Keep this name
-        action='store_true',
-        help="Skip ONLY the data download step within the growth score calculation."
-    )
     parser.add_argument(
         '--skip-screening',
         action='store_true',
@@ -645,7 +623,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Determine run parameters based on arguments
-    run_growth_data = not args.skip_growth_data_update
     run_screen = not args.skip_screening
     # run_trend_calculation = not args.skip_trend_calculation # If using the extra flag
 
@@ -660,6 +637,5 @@ if __name__ == "__main__":
 
     # Current implementation based on existing flags:
     main_pipeline(
-        run_growth_data_update=run_growth_data,
         run_final_screening=run_screen
     )

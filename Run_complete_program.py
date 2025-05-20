@@ -177,14 +177,13 @@ def run_main_process():
 
         logging.info("--- 开始执行主流程 (Gemini) ---")
         logging.info(
-            f"Gemini 参数: run_growth_data_update=False, run_final_screening={run_gemini_screening}"
+            f"Gemini 参数: run_final_screening={run_gemini_screening}"
         )
 
         start_time_gemini = time.time()
         try:
             change_working_directory(Gemini_dir)
             gemini_main_pipeline(
-                run_growth_data_update=False,
                 run_final_screening=run_gemini_screening
             )
             logging.info("--- 主流程 (Gemini) 执行完毕 ---")
@@ -552,7 +551,7 @@ def test_main_process():
 
         # 先测试 Gemini
         change_working_directory(Gemini_dir)
-        gemini_main_pipeline(False, False, True)
+        gemini_main_pipeline(True)
 
         # 再测试 GPT（若成功导入）
         if GPT_AVAILABLE:
