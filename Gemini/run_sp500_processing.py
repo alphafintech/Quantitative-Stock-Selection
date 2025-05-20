@@ -247,6 +247,10 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_calculate_indicat
         db_conf = TREND_CONFIG.get('database', {})
         price_db = db_conf.get('db_file')
         indicator_db = db_conf.get('indicator_db_file', os.path.join(BASE_DIR, 'trend_analysis.db'))
+        # Resolve relative indicator DB path to project root
+        if not os.path.isabs(indicator_db):
+            project_root = BASE_DIR.parent
+            indicator_db = os.path.join(project_root, indicator_db)
         if not price_db:
             logging.critical("Database file path not found in trend configuration.")
             print("Error: Database file path not found in trend configuration.")
