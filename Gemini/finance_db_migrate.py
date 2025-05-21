@@ -3,6 +3,7 @@ import os
 import configparser
 from pathlib import Path
 import logging
+import pandas as pd
 
 CREATE_ANNUAL = """
 CREATE TABLE IF NOT EXISTS annual_financials (
@@ -79,20 +80,109 @@ def migrate_connection(conn: sqlite3.Connection) -> bool:
     cur.execute(CREATE_ANNUAL)
     cur.execute(CREATE_QUARTERLY)
 
-    try:
-        cur.execute("SELECT COUNT(*) FROM annual_financials")
-        ann_count = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM quarterly_financials")
-        qtr_count = cur.fetchone()[0]
-    except sqlite3.Error:
-        ann_count = qtr_count = 0
+    df = pd.read_sql_query(
+        "SELECT * FROM raw_financials", conn, parse_dates=["report_date"]
+    )
+    if df.empty:
+        return False
 
-    if ann_count == 0 and qtr_count == 0:
-        cur.execute(INSERT_ANNUAL)
-        cur.execute(INSERT_QUARTERLY)
-        conn.commit()
-        return True
-    return False
+    rename_map = {
+        "Total Revenue": "revenue",
+        "TotalRevenue": "revenue",
+        "Net Income Common Stockholders": "net_income",
+        "Net Income": "net_income",
+        "NetIncome": "net_income",
+        "Diluted EPS": "eps",
+        "DilutedEPS": "eps",
+        "Operating Income": "op_income",
+        "OperatingIncome": "op_income",
+        "Total Operating Income As Reported": "op_income",
+        "EBIT": "ebit",
+        "Interest Expense": "interest_exp",
+        "InterestExpense": "interest_exp",
+        "Stockholders Equity": "equity",
+        "Total Stockholder Equity": "equity",
+        "ShareholderEquity": "equity",
+        "TotalEquityGrossMinorityInterest": "equity",
+        "Total Debt": "total_debt",
+        "Operating Cash Flow": "ocf",
+        "OperatingCashFlow": "ocf",
+        "CashFlowFromContinuingOperatingActivities": "ocf",
+        "Capital Expenditure": "capex",
+        "CapitalExpenditures": "capex",
+    }
+
+    df = df.rename(columns=rename_map)
+    if df.columns.duplicated().any():
+        dups = df.columns[df.columns.duplicated()].unique()
+        logging.warning(
+            "Duplicate columns after rename: %s. Keeping first.", dups.tolist()
+        )
+        df = df.loc[:, ~df.columns.duplicated(keep="first")]
+
+    if "revenue" not in df.columns and "total_revenue" in df.columns:
+        df["revenue"] = df["total_revenue"]
+    if "op_income" not in df.columns and "operating_income" in df.columns:
+        df["op_income"] = df["operating_income"]
+    if "ocf" not in df.columns and "operating_cash_flow" in df.columns:
+        df["ocf"] = df["operating_cash_flow"]
+    if "capex" not in df.columns and "capital_expenditures" in df.columns:
+        df["capex"] = df["capital_expenditures"]
+    if "interest_exp" not in df.columns and "interest_expense" in df.columns:
+        df["interest_exp"] = df["interest_expense"]
+    if "equity" not in df.columns and {
+        "total_assets",
+        "total_liabilities",
+    }.issubset(df.columns):
+        df["equity"] = pd.to_numeric(df["total_assets"], errors="coerce") - pd.to_numeric(
+            df["total_liabilities"], errors="coerce"
+        )
+    if "ebit" not in df.columns:
+        if "op_income" in df.columns:
+            df["ebit"] = df["op_income"]
+        elif "operating_income" in df.columns:
+            df["ebit"] = df["operating_income"]
+
+    required_cols = [
+        "revenue",
+        "net_income",
+        "eps",
+        "op_income",
+        "equity",
+        "total_debt",
+        "ocf",
+        "capex",
+        "ebit",
+        "interest_exp",
+    ]
+
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = pd.NA
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    annual = df[df["period"] == "A"].copy()
+    quarterly = df[df["period"] == "Q"].copy()
+
+    annual["period"] = pd.to_datetime(annual["report_date"], errors="coerce").dt.year.astype(
+        "Int64"
+    ).astype(str)
+    annual.dropna(subset=["period"], inplace=True)
+    quarterly["period"] = pd.to_datetime(quarterly["report_date"], errors="coerce").dt.strftime(
+        "%Y-%m-%d"
+    )
+    quarterly.dropna(subset=["period"], inplace=True)
+
+    final_cols = ["ticker", "period"] + required_cols
+
+    conn.execute("DELETE FROM annual_financials")
+    conn.execute("DELETE FROM quarterly_financials")
+    annual[final_cols].to_sql("annual_financials", conn, if_exists="append", index=False)
+    quarterly[final_cols].to_sql(
+        "quarterly_financials", conn, if_exists="append", index=False
+    )
+    conn.commit()
+    return True
 
 def migrate_db(db_path: str) -> bool:
     with sqlite3.connect(db_path) as conn:
