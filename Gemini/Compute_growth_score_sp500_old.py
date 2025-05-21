@@ -1208,7 +1208,7 @@ def compute_growth_score(update_data=True):
     # --- Database Connection & Setup ---
     conn = None
     try:
-        db_name = data_cfg.get('db_name', 'S&P500_finance_data.db')
+        db_name = data_cfg.get('db_name', 'Gemini_finance_data.db')
         conn = create_db_connection(db_name)
         if not conn:
             logging.critical("Failed to establish database connection. Exiting.")

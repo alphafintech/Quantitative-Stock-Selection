@@ -20,7 +20,7 @@ def _get_finance_db(cfg_path: str = "config.ini") -> str:
     cfg = configparser.ConfigParser()
     if os.path.exists(cfg_path):
         cfg.read(cfg_path)
-    return cfg.get("database", "finance_db", fallback="SP500_finance_data.db")
+    return cfg.get("database", "finance_db", fallback="Gemini_finance_data.db")
 
 def get_stock_financials(ticker: str,
                          db_path: str = _get_finance_db(),
@@ -32,7 +32,7 @@ def get_stock_financials(ticker: str,
     Args:
         ticker (str): 要查询的股票代码 (例如 'AAPL', 'MSFT').
         db_path (str): SQLite 数据库文件的路径。
-                       默认为 'SP500_finance_data.db'。
+                       默认为 'Gemini_finance_data.db'。
         save_to_excel (bool): 如果为 True，则将获取的数据保存到 Excel 文件。
                               默认为 False。
 

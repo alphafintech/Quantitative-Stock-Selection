@@ -69,7 +69,7 @@ def _get_finance_db(cfg_path: str = "config.ini") -> str:
     parser = configparser.ConfigParser()
     if os.path.exists(cfg_path):
         parser.read(cfg_path)
-    return parser.get("database", "finance_db", fallback="SP500_finance_data.db")
+    return parser.get("database", "finance_db", fallback="Gemini_finance_data.db")
 
 def migrate_connection(conn: sqlite3.Connection) -> bool:
     cur = conn.cursor()
