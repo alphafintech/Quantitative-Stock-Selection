@@ -279,15 +279,19 @@ def _latest_report_date(conn: sqlite3.Connection, ticker: str):
     return pd.to_datetime(res) if res else None
 
 
-def _safe_get(getter) -> pd.DataFrame:
+def _safe_get(getter, label: str = "") -> pd.DataFrame:
     for attempt in range(1, RETRIES + 1):
         try:
             df = getter().T
             if isinstance(df, dict) or df.empty:
                 raise ValueError("empty")
             return df
-        except Exception:
+        except Exception as exc:
             if attempt == RETRIES:
+                if label:
+                    logger.warning("Failed to fetch %s: %s", label, exc)
+                else:
+                    logger.warning("Failed to fetch data: %s", exc)
                 return pd.DataFrame()
             time.sleep(SLEEP_SEC)
 
@@ -295,24 +299,26 @@ def _safe_get(getter) -> pd.DataFrame:
 def _download_single_ticker(ticker: str):
     yf_tic = yf.Ticker(ticker)
     results: List[Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]] = []
-    q_inc = _safe_get(lambda: yf_tic.quarterly_income_stmt)
-    q_bal = _safe_get(lambda: yf_tic.quarterly_balance_sheet)
-    q_cf = _safe_get(lambda: yf_tic.quarterly_cashflow)
+    q_inc = _safe_get(lambda: yf_tic.quarterly_income_stmt, "quarterly income")
+    q_bal = _safe_get(lambda: yf_tic.quarterly_balance_sheet, "quarterly balance")
+    q_cf = _safe_get(lambda: yf_tic.quarterly_cashflow, "quarterly cashflow")
     if not q_inc.empty:
         q_union_idx = q_inc.index.union(q_bal.index).union(q_cf.index)
         q_inc = q_inc.reindex(q_union_idx)
         q_bal = q_bal.reindex(q_union_idx)
         q_cf = q_cf.reindex(q_union_idx)
         results.append(("Q", q_inc, q_bal, q_cf))
-    a_inc = _safe_get(lambda: yf_tic.income_stmt)
-    a_bal = _safe_get(lambda: yf_tic.balance_sheet)
-    a_cf = _safe_get(lambda: yf_tic.cashflow)
+    a_inc = _safe_get(lambda: yf_tic.income_stmt, "annual income")
+    a_bal = _safe_get(lambda: yf_tic.balance_sheet, "annual balance")
+    a_cf = _safe_get(lambda: yf_tic.cashflow, "annual cashflow")
     if not a_inc.empty:
         union_idx = a_inc.index.union(a_bal.index).union(a_cf.index)
         a_inc = a_inc.reindex(union_idx)
         a_bal = a_bal.reindex(union_idx)
         a_cf = a_cf.reindex(union_idx)
         results.append(("A", a_inc, a_bal, a_cf))
+    if not results:
+        logger.warning("No financial data downloaded for %s", ticker)
     return results
 
 
