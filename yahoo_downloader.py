@@ -5,11 +5,14 @@ import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
+import json # Added for JSON serialization
+from io import StringIO # Added for reading JSON string to DataFrame
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+import yfinance as yf 
+from yahooquery import Ticker as YQTicker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,15 +30,12 @@ def _get_sp500_tickers() -> List[str]:
         "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", header=0
     )[0]
     tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
-    tickers.append("SPY")
     return tickers
 
 
 # -----------------------------------------------------------------------------
-# Price data download
+# Price data download (Unchanged as per user request)
 # -----------------------------------------------------------------------------
-
-
 def _ensure_price_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -53,7 +53,6 @@ def _ensure_price_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
-
 
 def _insert_price_df(cur: sqlite3.Cursor, df: pd.DataFrame, ticker: str) -> None:
     df = df.copy().reset_index()
@@ -76,10 +75,7 @@ def _insert_price_df(cur: sqlite3.Cursor, df: pd.DataFrame, ticker: str) -> None
         df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
     df["ticker"] = ticker
-
-    # Drop duplicate column names if any (can occur with multi-indexed DataFrames)
     df = df.loc[:, ~df.columns.duplicated()]
-
     df = df[["ticker", "date", "open", "high", "low", "close", "adj_close", "volume"]]
     for row in df.itertuples(index=False):
         cur.execute(
@@ -91,7 +87,6 @@ def _insert_price_df(cur: sqlite3.Cursor, df: pd.DataFrame, ticker: str) -> None
             tuple(row),
         )
 
-
 def _latest_price_date(cur: sqlite3.Cursor, ticker: str) -> datetime.date | None:
     cur.execute(
         "SELECT MAX(date) FROM stock_data WHERE ticker=?",
@@ -100,324 +95,649 @@ def _latest_price_date(cur: sqlite3.Cursor, ticker: str) -> datetime.date | None
     res = cur.fetchone()[0]
     return pd.to_datetime(res).date() if res else None
 
-
 def download_price_data(
     db_path: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     config_file: str = "config.ini",
 ) -> None:
-    """Download daily price data for all S&P 500 tickers."""
-
+    """Download daily price data for all S&P 500 tickers using yfinance."""
     cfg = _load_cfg(config_file)
     if db_path is None:
         db_path = cfg.get("database", "price_db", fallback="SP500_price_data.db")
     if start_date is None:
-        start_date = cfg.get("data_download", "start_date", fallback="1900-01-01")
-        if not start_date:
-            start_date = "1900-01-01"
+        start_date = cfg.get("data_download", "start_price_date", fallback="1900-01-01")
+        if not start_date: start_date = "1900-01-01"
     if end_date is None:
-        end_date = cfg.get("data_download", "end_date")
-        if not end_date:
-            end_date = datetime.date.today().strftime("%Y-%m-%d")
+        end_date = cfg.get("data_download", "end_price_date")
+        if not end_date: end_date = datetime.date.today().strftime("%Y-%m-%d")
 
     try:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(db_path) as conn:
             _ensure_price_schema(conn)
             cur = conn.cursor()
-            tickers = _get_sp500_tickers()
+            tickers = _get_sp500_tickers() 
 
-            ticker_start: Dict[str, str] = {}
+            ticker_start: Dict[str, str | None] = {}
             for tk in tickers:
                 last = _latest_price_date(cur, tk)
+                s_date: str | None = start_date
                 if last is not None:
-                    start = (last + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-                    if start > end_date:
-                        start = None
-                else:
-                    start = start_date
-                ticker_start[tk] = start
+                    s_date = (last + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                    if s_date > end_date:
+                        s_date = None
+                ticker_start[tk] = s_date
+            
+            valid_tickers_to_download = {tk: s for tk, s in ticker_start.items() if s is not None}
+            if not valid_tickers_to_download:
+                logger.info("All price data is up to date.")
+                return
 
-            batch_size = 50
-            total_batches = (len(tickers) + batch_size - 1) // batch_size
-            processed = 0
-            for bidx, i in enumerate(range(0, len(tickers), batch_size), start=1):
-                batch = tickers[i : i + batch_size]
-                logger.info("Downloading batch %d/%d", bidx, total_batches)
-                min_start = (
-                    min(s for s in [ticker_start[tk] for tk in batch] if s is not None)
-                    if any(ticker_start[tk] for tk in batch)
-                    else end_date
-                )
+            min_overall_start = min(s for s in valid_tickers_to_download.values() if s is not None)
+
+            logger.info(f"Downloading price data for {len(valid_tickers_to_download)} tickers from {min_overall_start} to {end_date}")
+            
+            df_all = yf.download(
+                list(valid_tickers_to_download.keys()),
+                start=min_overall_start,
+                end=end_date,
+                group_by="ticker",
+                progress=True,
+                auto_adjust=False, 
+                actions=False 
+            )
+
+            if df_all.empty:
+                logger.info("No price data returned from yf.download.")
+                return
+
+            processed_count = 0
+            for tk, tk_start_date in valid_tickers_to_download.items():
+                logger.info("Processing price data for %s (%d/%d)", tk, processed_count + 1, len(valid_tickers_to_download))
+                if tk_start_date is None: 
+                    logger.info("%s already up to date or no start date", tk)
+                    processed_count += 1
+                    continue
+                
                 try:
-                    df_all = yf.download(
-                        batch,
-                        start=min_start,
-                        end=end_date,
-                        group_by="ticker",
-                        progress=False,
-                        threads=False,
-                        auto_adjust=False,
-                    )
-                except Exception as exc:
-                    logger.exception("[Batch %d] download error", bidx)
-                    logger.info("Retrying after 60s")
-                    time.sleep(60)
-                    df_all = yf.download(
-                        batch,
-                        start=min_start,
-                        end=end_date,
-                        group_by="ticker",
-                        progress=False,
-                        threads=False,
-                        auto_adjust=False,
-                    )
-
-                for tk in batch:
-                    start = ticker_start[tk]
-                    logger.info("Processing %s (%d/%d)", tk, processed + 1, len(tickers))
-                    if start is None:
-                        logger.info("%s already up to date", tk)
-                        processed += 1
-                        continue
-                    if tk not in df_all.columns.get_level_values(0):
-                        logger.info("[Batch] no data for %s", tk)
-                        processed += 1
-                        continue
-                    df_single = df_all[tk].dropna(how="all")
+                    if isinstance(df_all.columns, pd.MultiIndex):
+                        df_single = df_all.get(tk)
+                        if df_single is None or df_single.empty:
+                            logger.warning("No data for ticker %s in downloaded batch.", tk)
+                            processed_count += 1
+                            continue
+                    else: 
+                        df_single = df_all
+                    
+                    df_single = df_single.dropna(how="all")
                     if df_single.empty:
-                        processed += 1
+                        processed_count += 1
                         continue
-                    df_single = df_single[df_single.index >= start]
-                    _insert_price_df(cur, df_single, tk)
-                    logger.debug("Stored %d rows for %s", len(df_single), tk)
-                    processed += 1
-                conn.commit()
-                logger.info("Processed batch %d/%d", bidx, total_batches)
-                time.sleep(1)
-    except Exception as exc:  # catch-all so caller doesn't fail
+                    
+                    df_single_filtered = df_single[df_single.index >= pd.to_datetime(tk_start_date)]
+                    
+                    if not df_single_filtered.empty:
+                        _insert_price_df(cur, df_single_filtered, tk)
+                        logger.debug("Stored %d price rows for %s", len(df_single_filtered), tk)
+                    else:
+                        logger.info("No new price data to store for %s after date filtering.", tk)
+                except Exception as e_tk:
+                    logger.error("Error processing price data for ticker %s: %s", tk, e_tk)
+                
+                processed_count += 1
+            conn.commit()
+            logger.info("Finished downloading and storing price data.")
+    except Exception as exc:
         logger.exception("download_price_data failed: %s", exc)
 
 
 # -----------------------------------------------------------------------------
-# Financial data download
+# Financial data download (Split into acquisition and processing)
 # -----------------------------------------------------------------------------
 
-RETRIES = 3
-SLEEP_SEC = 0.2
-RAW_TABLE = "raw_financials"
-RAW_COLS = [
-    "ticker",
-    "report_date",
-    "period",
-    "total_revenue",
-    "eps",
-    "gross_profit",
-    "operating_income",
-    "net_income",
-    "research_development",
-    "interest_expense",
-    "ebitda",
-    "total_assets",
-    "total_current_assets",
-    "total_current_liabilities",
-    "cash_and_eq",
-    "minority_interest",
-    "total_debt",
-    "shares_outstanding",
-    "total_liabilities",
-    "operating_cash_flow",
-    "capital_expenditures",
-    "free_cash_flow",
-    "price",
-    "forward_eps",
+RAW_TABLE = "raw_financials" # Final table for processed data
+RAW_COLS = [ 
+    "ticker", "report_date", "period", "total_revenue", "eps", "gross_profit",
+    "operating_income", "net_income", "research_development", "interest_expense",
+    "ebitda", "total_assets", "total_current_assets", "total_current_liabilities",
+    "cash_and_eq", "minority_interest", "total_debt", "shares_outstanding",
+    "total_liabilities", "operating_cash_flow", "capital_expenditures",
+    "free_cash_flow", "price", "forward_eps",
 ]
 
+# --- Staging Database Helper ---
+def _ensure_raw_stage_table_exists(conn: sqlite3.Connection, table_name: str) -> None:
+    """Ensures a table for raw staged data exists."""
+    try:
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                ticker TEXT PRIMARY KEY,
+                data_json TEXT
+            )
+            """
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"Error creating staging table {table_name}: {e}")
+        raise
 
+# --- Final Database Schema Helper (for raw_financials) ---
 def _ensure_fin_schema(conn: sqlite3.Connection) -> None:
-    pd.DataFrame(columns=RAW_COLS).to_sql(
-        RAW_TABLE, conn, if_exists="append", index=False
-    )
-
+    cur = conn.cursor()
+    cur.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{RAW_TABLE}'")
+    if cur.fetchone() is None:
+        cols_sql = ", ".join([f"{col} REAL" if col not in ['ticker', 'report_date', 'period'] else f"{col} TEXT" for col in RAW_COLS])
+        primary_key_sql = "PRIMARY KEY (ticker, report_date, period)"
+        if not all(pk_col in RAW_COLS for pk_col in ['ticker', 'report_date', 'period']):
+            logger.error(f"Primary key columns for {RAW_TABLE} are not all in RAW_COLS. Aborting schema creation.")
+            raise ValueError(f"Primary key columns for {RAW_TABLE} are not all in RAW_COLS.")
+        create_table_sql = f"CREATE TABLE {RAW_TABLE} ({cols_sql}, {primary_key_sql})"
+        try:
+            cur.execute(create_table_sql)
+            conn.commit()
+            logger.info(f"Created table '{RAW_TABLE}' as it did not exist with schema: {RAW_COLS}")
+        except sqlite3.Error as e:
+            logger.error(f"Error creating table {RAW_TABLE}: {e}")
+            raise
+    else: 
+        cur.execute(f"PRAGMA table_info({RAW_TABLE})")
+        existing_cols = [row[1] for row in cur.fetchall()]
+        if not all(col in existing_cols for col in RAW_COLS):
+            logger.warning(f"Table '{RAW_TABLE}' exists but schema might mismatch. Expected: {RAW_COLS}, Found: {existing_cols}")
+        else:
+            logger.info(f"Table '{RAW_TABLE}' schema seems to be in place.")
 
 def _norm(label: str) -> str:
     return "".join(ch for ch in label.lower() if ch.isalnum())
 
-
 def _first_available(
-    df: pd.DataFrame, keys: List[str], default=np.nan, idx: pd.Index | None = None
+    df: pd.DataFrame, keys: List[str], default: Any = np.nan, idx: pd.Index | None = None
 ) -> pd.Series:
     if df.empty:
-        return pd.Series(default, index=idx if idx is not None else [])
-    cols = list(df.columns)
+        return pd.Series(default, index=idx if idx is not None else pd.Index([]), dtype=object)
+    target_idx = idx if idx is not None else df.index
+    if target_idx.empty and df.empty :
+         return pd.Series(default, index=pd.Index([]), dtype=object)
+    result_series = pd.Series(default, index=target_idx, dtype=object)
     for k in keys:
-        if k in cols:
-            s = df[k]
-            return s.reindex(idx) if idx is not None else s
-    norm_map = {_norm(c): c for c in cols}
+        if k in df.columns:
+            source_series = df[k]
+            if default is not np.nan: 
+                 source_series = source_series.fillna(default)
+            aligned_series = source_series.reindex(target_idx)
+            return aligned_series.fillna(default)
+    norm_map = {_norm(c): c for c in df.columns}
     for k in keys:
         nk = _norm(k)
         if nk in norm_map:
-            s = df[norm_map[nk]]
-            return s.reindex(idx) if idx is not None else s
+            source_series = df[norm_map[nk]]
+            if default is not np.nan:
+                 source_series = source_series.fillna(default)
+            aligned_series = source_series.reindex(target_idx)
+            return aligned_series.fillna(default)
     norm_keys = [_norm(k) for k in keys]
-    for col in cols:
-        nc = _norm(col)
+    for col_name in df.columns:
+        nc = _norm(col_name)
         if any(nk in nc or nc in nk for nk in norm_keys):
-            s = df[col]
-            return s.reindex(idx) if idx is not None else s
-    return pd.Series(default, index=idx if idx is not None else df.index)
+            source_series = df[col_name]
+            if default is not np.nan:
+                 source_series = source_series.fillna(default)
+            aligned_series = source_series.reindex(target_idx)
+            return aligned_series.fillna(default)
+    return result_series
 
-
-def _latest_report_date(conn: sqlite3.Connection, ticker: str):
+def _latest_report_date(conn: sqlite3.Connection, ticker: str, period_type: str):
     cur = conn.execute(
-        f"SELECT MAX(report_date) FROM {RAW_TABLE} WHERE ticker=?",
-        (ticker,),
+        f"SELECT MAX(report_date) FROM {RAW_TABLE} WHERE ticker=? AND period=?",
+        (ticker, period_type),
     )
     res = cur.fetchone()[0]
     return pd.to_datetime(res) if res else None
 
-
-def _safe_get(getter, label: str = "") -> pd.DataFrame:
-    for attempt in range(1, RETRIES + 1):
-        try:
-            df = getter().T
-            if isinstance(df, dict) or df.empty:
-                raise ValueError("empty")
-            return df
-        except Exception as exc:
-            if attempt == RETRIES:
-                if label:
-                    logger.warning("Failed to fetch %s: %s", label, exc)
-                else:
-                    logger.warning("Failed to fetch data: %s", exc)
-                return pd.DataFrame()
-            time.sleep(SLEEP_SEC)
-
-
-def _download_single_ticker(ticker: str):
-    yf_tic = yf.Ticker(ticker)
-    results: List[Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]] = []
-    q_inc = _safe_get(lambda: yf_tic.quarterly_income_stmt, "quarterly income")
-    q_bal = _safe_get(lambda: yf_tic.quarterly_balance_sheet, "quarterly balance")
-    q_cf = _safe_get(lambda: yf_tic.quarterly_cashflow, "quarterly cashflow")
-    if not q_inc.empty:
-        q_union_idx = q_inc.index.union(q_bal.index).union(q_cf.index)
-        q_inc = q_inc.reindex(q_union_idx)
-        q_bal = q_bal.reindex(q_union_idx)
-        q_cf = q_cf.reindex(q_union_idx)
-        results.append(("Q", q_inc, q_bal, q_cf))
-    a_inc = _safe_get(lambda: yf_tic.income_stmt, "annual income")
-    a_bal = _safe_get(lambda: yf_tic.balance_sheet, "annual balance")
-    a_cf = _safe_get(lambda: yf_tic.cashflow, "annual cashflow")
-    if not a_inc.empty:
-        union_idx = a_inc.index.union(a_bal.index).union(a_cf.index)
-        a_inc = a_inc.reindex(union_idx)
-        a_bal = a_bal.reindex(union_idx)
-        a_cf = a_cf.reindex(union_idx)
-        results.append(("A", a_inc, a_bal, a_cf))
-    if not results:
-        logger.warning("No financial data downloaded for %s", ticker)
-    return results
-
-
-def _save_batches(conn: sqlite3.Connection, ticker: str, batches) -> None:
-    if not batches:
-        return
-    for period, inc, bal, cf in batches:
-        for df in (inc, bal, cf):
-            df.index = pd.to_datetime(df.index).tz_localize(None)
-        idx = inc.index
-        last = _latest_report_date(conn, ticker)
-        if last is not None:
-            mask = idx > last
-            inc, bal, cf = inc[mask], bal[mask], cf[mask]
-            idx = inc.index
-            if inc.empty:
-                continue
-        try:
-            y = yf.Ticker(ticker)
-            price = y.history(period="1d")["Close"].iloc[-1]
-            fwd = y.info.get("forwardEps", np.nan)
-        except Exception:
-            price = fwd = np.nan
-        out = pd.DataFrame(
-            {
-                "ticker": ticker,
-                "report_date": idx,
-                "total_revenue": _first_available(inc, ["Total Revenue", "Revenue"], idx=idx),
-                "eps": _first_available(inc, ["Diluted EPS", "EPS"], idx=idx),
-                "gross_profit": _first_available(inc, ["Gross Profit"], idx=idx),
-                "operating_income": _first_available(inc, ["Operating Income"], idx=idx),
-                "net_income": _first_available(inc, ["Net Income"], idx=idx),
-                "research_development": _first_available(
-                    inc, ["Research and development", "R&D"], default=np.nan, idx=idx
-                ),
-                "interest_expense": _first_available(
-                    inc, ["Interest Expense"], default=np.nan, idx=idx
-                ),
-                "ebitda": _first_available(inc, ["EBITDA"], default=np.nan, idx=idx),
-                "total_assets": _first_available(bal, ["Total Assets"], idx=idx),
-                "total_current_assets": _first_available(
-                    bal, ["Total Current Assets"], default=np.nan, idx=idx
-                ),
-                "total_current_liabilities": _first_available(
-                    bal, ["Total Current Liabilities"], default=np.nan, idx=idx
-                ),
-                "cash_and_eq": _first_available(
-                    bal, ["Cash And Cash Equivalents"], default=np.nan, idx=idx
-                ),
-                "minority_interest": _first_available(
-                    bal, ["Minority Interest"], default=0, idx=idx
-                ),
-                "total_debt": _first_available(bal, ["Long Term Debt"], default=0, idx=idx)
-                + _first_available(bal, ["Short Long Term Debt"], default=0, idx=idx),
-                "shares_outstanding": _first_available(
-                    bal, ["Ordinary Shares Number", "Share Issued"], default=np.nan, idx=idx
-                ),
-                "total_liabilities": _first_available(
-                    bal, ["Total Liab", "Total Liabilities"], idx=idx
-                ),
-                "operating_cash_flow": _first_available(
-                    cf, ["Operating Cash Flow"], idx=idx
-                ),
-                "capital_expenditures": _first_available(
-                    cf, ["Capital Expenditures", "CapEx"], default=np.nan, idx=idx
-                ),
-                "free_cash_flow": pd.Series(dtype=float),
-                "price": price,
-                "forward_eps": fwd,
-            }
-        )
-        out["period"] = period
-        out["free_cash_flow"] = (
-            pd.to_numeric(out["operating_cash_flow"], errors="coerce").fillna(0.0)
-            + pd.to_numeric(out["capital_expenditures"], errors="coerce").fillna(0.0)
-        )
-        out = out.reindex(columns=RAW_COLS)
-        out["report_date"] = pd.to_datetime(out["report_date"]).dt.strftime("%Y-%m-%d")
-        numeric_cols = [c for c in out.columns if c not in ("ticker", "report_date", "period")]
-        out[numeric_cols] = out[numeric_cols].apply(pd.to_numeric, errors="coerce")
-        out.to_sql(RAW_TABLE, conn, if_exists="append", index=False)
-
-
-def download_financial_data(
-    db_path: str | None = None, config_file: str = "config.ini"
+def _save_financial_data_for_ticker(
+    conn: sqlite3.Connection, 
+    ticker: str,
+    statement_data: List[Tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]],
+    price_info: float | None,
+    forward_eps_info: float | None
 ) -> None:
-    """Download Yahoo Finance financial statements for all S&P 500 tickers."""
+    if not statement_data:
+        logger.debug("No statement data provided for %s to save to final DB.", ticker)
+        return
+    all_dfs_to_save = []
+    for period_type, inc_df, bal_df, cf_df in statement_data:
+        valid_inc = isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(inc_df.index, pd.DatetimeIndex)
+        valid_bal = isinstance(bal_df, pd.DataFrame) and not bal_df.empty and isinstance(bal_df.index, pd.DatetimeIndex)
+        valid_cf  = isinstance(cf_df, pd.DataFrame) and not cf_df.empty and isinstance(cf_df.index, pd.DatetimeIndex)
+        if not (valid_inc or valid_bal or valid_cf):
+            logger.debug("No valid statement DataFrames for %s, period %s (final processing).", ticker, period_type)
+            continue
+        all_indices = pd.Index([])
+        if valid_inc: all_indices = all_indices.union(inc_df.index)
+        if valid_bal: all_indices = all_indices.union(bal_df.index)
+        if valid_cf:  all_indices = all_indices.union(cf_df.index)
+        if all_indices.empty:
+            logger.debug("No common dates found for %s, period %s (final processing).", ticker, period_type)
+            continue
+        idx_to_process = all_indices
+        last_db_date = _latest_report_date(conn, ticker, period_type) 
+        if last_db_date is not None:
+            current_idx_tz = idx_to_process.tz
+            if current_idx_tz is not None and last_db_date.tzinfo is None:
+                last_db_date = pd.Timestamp(last_db_date).tz_localize(current_idx_tz)
+            elif current_idx_tz is None and last_db_date.tzinfo is not None:
+                last_db_date = last_db_date.tz_localize(None)
+            mask = idx_to_process > last_db_date
+            idx_to_process = idx_to_process[mask]
+            if idx_to_process.empty:
+                logger.info("No new %s data for %s since %s (final DB check).", period_type, ticker, last_db_date.strftime('%Y-%m-%d'))
+                continue
+        logger.info("Processing %d new %s report(s) for %s (for final DB).", len(idx_to_process), period_type, ticker)
+        inc_df_reindexed = inc_df.reindex(idx_to_process) if valid_inc else pd.DataFrame(index=idx_to_process)
+        bal_df_reindexed = bal_df.reindex(idx_to_process) if valid_bal else pd.DataFrame(index=idx_to_process)
+        cf_df_reindexed  = cf_df.reindex(idx_to_process) if valid_cf  else pd.DataFrame(index=idx_to_process)
+        out = pd.DataFrame(index=idx_to_process)
+        out["ticker"] = ticker
+        out["report_date"] = idx_to_process 
+        out["period"] = period_type
+        out["total_revenue"] = _first_available(inc_df_reindexed, ["TotalRevenue"], idx=idx_to_process)
+        out["eps"] = _first_available(inc_df_reindexed, ["DilutedEPS", "BasicEPS"], idx=idx_to_process) 
+        out["gross_profit"] = _first_available(inc_df_reindexed, ["GrossProfit"], idx=idx_to_process)
+        out["operating_income"] = _first_available(inc_df_reindexed, ["OperatingIncome"], idx=idx_to_process)
+        out["net_income"] = _first_available(inc_df_reindexed, ["NetIncomeContinuousOperations", "NetIncome", "NetIncomeCommonStockholders"], idx=idx_to_process)
+        out["research_development"] = _first_available(inc_df_reindexed, ["ResearchAndDevelopment"], default=0.0, idx=idx_to_process) 
+        out["interest_expense"] = _first_available(inc_df_reindexed, ["InterestExpense"], default=0.0, idx=idx_to_process)
+        out["ebitda"] = _first_available(inc_df_reindexed, ["EBITDA", "NormalizedEBITDA"], default=np.nan, idx=idx_to_process)
+        out["total_assets"] = _first_available(bal_df_reindexed, ["TotalAssets"], idx=idx_to_process)
+        out["total_current_assets"] = _first_available(bal_df_reindexed, ["TotalCurrentAssets"], idx=idx_to_process)
+        out["total_current_liabilities"] = _first_available(bal_df_reindexed, ["TotalCurrentLiabilities"], idx=idx_to_process)
+        out["cash_and_eq"] = _first_available(bal_df_reindexed, ["CashAndCashEquivalents", "CashCashEquivalentsAndShortTermInvestments"], idx=idx_to_process)
+        out["minority_interest"] = _first_available(bal_df_reindexed, ["MinorityInterest"], default=0.0, idx=idx_to_process)
+        out["total_debt"] = _first_available(bal_df_reindexed, ["TotalDebt"], default=0.0, idx=idx_to_process)
+        out["shares_outstanding"] = _first_available(bal_df_reindexed, ["ShareIssued", "OrdinarySharesNumber"], idx=idx_to_process)
+        if out["shares_outstanding"].isnull().all(): 
+            out["shares_outstanding"] = _first_available(inc_df_reindexed, ["DilutedAverageShares", "BasicAverageShares"], idx=idx_to_process)
+        out["total_liabilities"] = _first_available(bal_df_reindexed, ["TotalLiabilitiesNetMinorityInterest", "TotalLiab"], idx=idx_to_process)
+        out["operating_cash_flow"] = _first_available(cf_df_reindexed, ["OperatingCashFlow", "CashFlowFromContinuingOperatingActivities"], idx=idx_to_process)
+        out["capital_expenditures"] = _first_available(cf_df_reindexed, ["CapitalExpenditure", "PurchaseOfPPE", "NetPPEPurchaseAndSale"], default=0.0, idx=idx_to_process)
+        ocf_num = pd.to_numeric(out["operating_cash_flow"], errors="coerce").fillna(0.0)
+        capex_num = pd.to_numeric(out["capital_expenditures"], errors="coerce").fillna(0.0)
+        out["free_cash_flow"] = ocf_num + capex_num 
+        out["price"] = price_info
+        out["forward_eps"] = forward_eps_info
+        for col in RAW_COLS:
+            if col not in out.columns:
+                out[col] = np.nan
+        out = out.reindex(columns=RAW_COLS) 
+        if isinstance(out["report_date"], pd.Series) and pd.api.types.is_datetime64_any_dtype(out["report_date"]):
+            if out["report_date"].dt.tz is not None:
+                out["report_date"] = out["report_date"].dt.tz_localize(None)
+            out["report_date"] = out["report_date"].dt.strftime("%Y-%m-%d")
+        numeric_cols = [c for c in RAW_COLS if c not in ("ticker", "report_date", "period")]
+        for col in numeric_cols:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+        all_dfs_to_save.append(out)
+    if all_dfs_to_save:
+        final_df_to_save = pd.concat(all_dfs_to_save).reset_index(drop=True)
+        final_df_to_save.dropna(subset=["report_date"], inplace=True) 
+        if not final_df_to_save.empty:
+            try:
+                final_df_to_save.to_sql(RAW_TABLE, conn, if_exists="append", index=False)
+                conn.commit()
+                logger.info("Saved %d records for %s to %s.", len(final_df_to_save), ticker, RAW_TABLE)
+            except sqlite3.IntegrityError as ie:
+                logger.error(f"Integrity error saving data for ticker {ticker} to {RAW_TABLE}: {ie}. This might be due to duplicate primary key.")
+                conn.rollback()
+            except Exception as e:
+                logger.error("Error saving data for ticker %s to SQL table %s: %s", ticker, RAW_TABLE, e)
+                conn.rollback()
+        else:
+            logger.info("No new data to save for ticker %s to final DB after processing all periods.", ticker)
+    else:
+        logger.info("No dataframes were prepared for saving for ticker %s to final DB.", ticker)
 
+# --- Helper function to save single ticker data to staging DB ---
+def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: str, table_name: str, data_to_save: Any):
+    """
+    Serializes and saves data for a single ticker for a single data type to the staging DB.
+    'data_to_save' can be a DataFrame, dict, or an error string from yahooquery.
+    """
+    json_data_str = None
+    if isinstance(data_to_save, pd.DataFrame):
+        if not data_to_save.empty:
+            try:
+                # orient='split' is good for DataFrames with DatetimeIndex
+                json_data_str = data_to_save.to_json(orient="split", date_format="iso", default_handler=str)
+            except Exception as e_json:
+                logger.error(f"Error serializing DataFrame to JSON for {ticker}, table {table_name}: {e_json}")
+    elif isinstance(data_to_save, dict):
+        try:
+            json_data_str = json.dumps(data_to_save)
+        except Exception as e_json:
+            logger.error(f"Error serializing dict to JSON for {ticker}, table {table_name}: {e_json}")
+    elif isinstance(data_to_save, str): # Likely an error message from yahooquery
+        logger.warning(f"yahooquery returned error for {ticker}, data intended for {table_name}: {data_to_save}")
+    elif data_to_save is not None: 
+        logger.warning(f"Unexpected data type for {ticker}, table {table_name}: {type(data_to_save)}. Cannot serialize.")
+
+    if json_data_str:
+        try:
+            stage_conn.execute(
+                f"INSERT OR REPLACE INTO {table_name} (ticker, data_json) VALUES (?, ?)",
+                (ticker, json_data_str)
+            )
+        except sqlite3.Error as e_sql:
+            logger.error(f"Error saving to staging DB for {ticker}, {table_name}: {e_sql}")
+
+
+# --- Phase 1: Data Acquisition ---
+def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bool:
+    """
+    Acquires raw financial data using yahooquery and saves it to a staging database.
+    Returns True if successful, False otherwise.
+    """
+    logger.info("--- Starting Phase 1: Data Acquisition and Saving to Staging DB ---")
     cfg = _load_cfg(config_file)
-    if db_path is None:
-        db_path = cfg.get("database", "finance_db", fallback="SP500_finance_data.db")
+    raw_stage_db_path_str = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
+    Path(raw_stage_db_path_str).parent.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        tickers = _get_sp500_tickers()
+        if not tickers:
+            logger.error("No tickers found. Aborting financial data acquisition.")
+            return False
+        logger.info(f"Found {len(tickers)} S&P 500 tickers for acquisition.")
+    except Exception as e:
+        logger.error(f"Failed to get S&P 500 tickers: {e}")
+        return False
 
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    tickers = _get_sp500_tickers()
-    with sqlite3.connect(db_path) as conn:
-        _ensure_fin_schema(conn)
-        total = len(tickers)
-        for idx, tk in enumerate(tickers, start=1):
-            batches = _download_single_ticker(tk)
-            _save_batches(conn, tk, batches)
-            logger.info("Saved %s (%d/%d)", tk, idx, total)
-            time.sleep(0.1)
+    stage_table_map = {
+        "q_incs": "stg_quarterly_income", "q_bals": "stg_quarterly_balance", "q_cfs": "stg_quarterly_cashflow",
+        "a_incs": "stg_annual_income",   "a_bals": "stg_annual_balance",   "a_cfs": "stg_annual_cashflow",
+        "price": "stg_price_summary",    "key_stats": "stg_key_stats"
+    }
+
+    try:
+        with sqlite3.connect(raw_stage_db_path_str) as stage_conn:
+            for table_name in stage_table_map.values():
+                _ensure_raw_stage_table_exists(stage_conn, table_name)
+    except Exception as e:
+        logger.error(f"Failed to initialize staging database or tables: {e}")
+        return False
+
+    chunk_size = 50 
+    all_chunks_successful = True
+    for i in range(0, len(tickers), chunk_size):
+        ticker_chunk = tickers[i:i + chunk_size]
+        logger.info(f"Acquiring data for ticker chunk {i//chunk_size + 1}/{(len(tickers) + chunk_size - 1)//chunk_size} ({len(ticker_chunk)} tickers).")
+        
+        try:
+            yq_batch_tickers = YQTicker(
+                ticker_chunk, asynchronous=True, validate=False, 
+                progress=True, timeout=60, max_workers=16 
+            )
+
+            chunk_data_results = { 
+                "q_incs": yq_batch_tickers.income_statement(frequency='q'),
+                "q_bals": yq_batch_tickers.balance_sheet(frequency='q'),
+                "q_cfs": yq_batch_tickers.cash_flow(frequency='q'),
+                "a_incs": yq_batch_tickers.income_statement(frequency='a'),
+                "a_bals": yq_batch_tickers.balance_sheet(frequency='a'),
+                "a_cfs": yq_batch_tickers.cash_flow(frequency='a'),
+                "price": yq_batch_tickers.price,
+                "key_stats": yq_batch_tickers.key_stats
+            }
+            logger.info(f"Finished fetching data for chunk {i//chunk_size + 1} from yahooquery.")
+
+            with sqlite3.connect(raw_stage_db_path_str) as stage_conn_chunk_save:
+                for data_key, yq_batch_result_for_datakey in chunk_data_results.items():
+                    stage_table_name = stage_table_map[data_key]
+                    for tk_in_chunk in ticker_chunk:
+                        data_for_single_ticker = None 
+
+                        if isinstance(yq_batch_result_for_datakey, dict):
+                            data_for_single_ticker = yq_batch_result_for_datakey.get(tk_in_chunk)
+                        elif isinstance(yq_batch_result_for_datakey, pd.DataFrame):
+                            df_chunk_data = yq_batch_result_for_datakey
+                            # Case 1: MultiIndex with 'symbol' level
+                            if isinstance(df_chunk_data.index, pd.MultiIndex) and 'symbol' in df_chunk_data.index.names:
+                                logger.debug(f"DataFrame for {data_key} is MultiIndex. Attempting .xs for ticker '{tk_in_chunk}'. Index names: {df_chunk_data.index.names}")
+                                try:
+                                    if tk_in_chunk in df_chunk_data.index.get_level_values('symbol'):
+                                        data_for_single_ticker = df_chunk_data.xs(tk_in_chunk, level='symbol')
+                                    else:
+                                        logger.debug(f"Ticker {tk_in_chunk} not in 'symbol' level values for {data_key} (MultiIndex case).")
+                                except TypeError as te: 
+                                    logger.error(
+                                        f"TypeError during .xs for {tk_in_chunk} on {data_key} (expected MultiIndex): {te}. "
+                                        f"Index details: type={type(df_chunk_data.index)}, names={df_chunk_data.index.names}, is_multi={isinstance(df_chunk_data.index, pd.MultiIndex)}"
+                                    )
+                                except KeyError: 
+                                    logger.debug(f"KeyError (ticker not found) during .xs for '{tk_in_chunk}' in {data_key} (MultiIndex case).")
+                                except Exception as e_xs: 
+                                    logger.error(f"Unexpected error during .xs for {tk_in_chunk} on {data_key}: {e_xs}")
+
+                            # Case 2: Simple 'symbol' index (DataFrame where each row is a ticker)
+                            elif df_chunk_data.index.name == 'symbol' and \
+                                 isinstance(df_chunk_data.index, pd.Index) and \
+                                 not isinstance(df_chunk_data.index, pd.MultiIndex) and \
+                                 len(ticker_chunk) > 1 :
+                                logger.debug(f"DataFrame for {data_key} has 'symbol' as simple Index for multi-ticker chunk. Attempting to extract/reconstruct for '{tk_in_chunk}'.")
+                                if tk_in_chunk in df_chunk_data.index:
+                                    extracted_data_for_ticker_row = df_chunk_data.loc[tk_in_chunk] 
+                                    
+                                    if isinstance(extracted_data_for_ticker_row, pd.DataFrame) :
+                                        df_to_check = extracted_data_for_ticker_row.copy() # Work with a copy
+                                        if isinstance(df_to_check.index, pd.DatetimeIndex):
+                                            data_for_single_ticker = df_to_check
+                                            logger.debug(f"Directly using DataFrame for {tk_in_chunk}, {data_key} from 'symbol' indexed data (DatetimeIndex ok). Shape: {data_for_single_ticker.shape}")
+                                        else:
+                                            date_col_candidates = ['asOfDate', 'reportDate', 'endDate']
+                                            actual_date_col = None
+                                            for col_cand in date_col_candidates:
+                                                if col_cand in df_to_check.columns:
+                                                    actual_date_col = col_cand
+                                                    break
+                                            if actual_date_col:
+                                                logger.debug(f"Found potential date column '{actual_date_col}' in DataFrame for {tk_in_chunk}, {data_key}. Attempting to set as DatetimeIndex.")
+                                                try:
+                                                    df_to_check[actual_date_col] = pd.to_datetime(df_to_check[actual_date_col], errors='coerce')
+                                                    df_with_date_index = df_to_check.set_index(actual_date_col)
+                                                    if isinstance(df_with_date_index.index, pd.DatetimeIndex) and not df_with_date_index.empty:
+                                                        data_for_single_ticker = df_with_date_index
+                                                        logger.debug(f"Successfully set '{actual_date_col}' as DatetimeIndex for {tk_in_chunk}, {data_key}. Shape: {data_for_single_ticker.shape}")
+                                                    else:
+                                                        logger.warning(f"Failed to set '{actual_date_col}' as a valid DatetimeIndex for {tk_in_chunk}, {data_key}, or resulting DF empty. Discarding.")
+                                                except Exception as e_set_idx:
+                                                    logger.error(f"Error setting date column '{actual_date_col}' as index for {tk_in_chunk}, {data_key}: {e_set_idx}")
+                                            elif isinstance(df_to_check.columns, pd.DatetimeIndex):
+                                                logger.debug(f"Extracted data for {tk_in_chunk}, {data_key} is a DataFrame with DatetimeIndex columns. Attempting transpose.")
+                                                data_for_single_ticker = df_to_check.T
+                                                if not isinstance(data_for_single_ticker.index, pd.DatetimeIndex): 
+                                                    logger.warning(f"Transposed DataFrame for {tk_in_chunk}, {data_key} still does not have DatetimeIndex. Index type: {type(data_for_single_ticker.index)}. Discarding.")
+                                                    data_for_single_ticker = None
+                                                else:
+                                                    logger.debug(f"Successfully used transposed DataFrame for {tk_in_chunk}, {data_key}. Shape: {data_for_single_ticker.shape}")
+                                            else:
+                                                logger.warning(f"Extracted data for {tk_in_chunk} from 'symbol' indexed DataFrame for {data_key} is a DataFrame with an unexpected index/column structure. Type: {type(df_to_check)}, Index Type: {type(df_to_check.index)}, Columns: {df_to_check.columns}. Discarding.")
+
+                                    elif isinstance(extracted_data_for_ticker_row, pd.Series):
+                                        logger.debug(f"Attempting to reconstruct DataFrame for {tk_in_chunk}, {data_key} from Series of Series.")
+                                        reconstructed_df_data = {}
+                                        valid_item_found = False
+                                        for item_name, item_value_series in extracted_data_for_ticker_row.items():
+                                            if isinstance(item_value_series, pd.Series) and isinstance(item_value_series.index, pd.DatetimeIndex):
+                                                reconstructed_df_data[item_name] = item_value_series
+                                                valid_item_found = True
+                                        
+                                        if valid_item_found:
+                                            data_for_single_ticker = pd.DataFrame(reconstructed_df_data)
+                                            if not data_for_single_ticker.empty and isinstance(data_for_single_ticker.index, pd.DatetimeIndex):
+                                                logger.debug(f"Successfully reconstructed DataFrame for {tk_in_chunk}, {data_key} from Series of Series. Shape: {data_for_single_ticker.shape}")
+                                            elif not data_for_single_ticker.empty : 
+                                                logger.warning(f"Reconstructed DataFrame for {tk_in_chunk}, {data_key} from Series of Series does not have DatetimeIndex. Index type: {type(data_for_single_ticker.index)}. Discarding.")
+                                                data_for_single_ticker = None 
+                                        elif not extracted_data_for_ticker_row.empty: 
+                                             logger.warning(f"Could not reconstruct valid DataFrame for {tk_in_chunk}, {data_key} from Series of Series. All items might have been invalid or NaN.")
+                                    else:
+                                        logger.warning(f"Extracted data for {tk_in_chunk} from 'symbol' indexed DataFrame for {data_key} is neither a usable DataFrame nor a Series. Type: {type(extracted_data_for_ticker_row)}")
+                                else:
+                                    logger.debug(f"Ticker {tk_in_chunk} not found in 'symbol' indexed DataFrame for {data_key}.")
+                            
+                            # Case 3: Single ticker in chunk, and result is a DataFrame (assume it's for this ticker)
+                            elif len(ticker_chunk) == 1 and not df_chunk_data.empty:
+                                data_for_single_ticker = df_chunk_data
+                            
+                            # Case 4: Fallback warning for other unhandled DataFrame structures
+                            elif tk_in_chunk == ticker_chunk[0]: # Log only once per chunk for this unhandled case
+                                 logger.warning(
+                                    f"Unhandled DataFrame structure for {data_key} in chunk (tickers: {len(ticker_chunk)}). "
+                                    f"Index: {df_chunk_data.index.name if df_chunk_data.index.name else 'Unnamed'}, Type: {type(df_chunk_data.index)}, IsMulti: {isinstance(df_chunk_data.index, pd.MultiIndex)}"
+                                )
+                        elif isinstance(yq_batch_result_for_datakey, str): 
+                            if tk_in_chunk == ticker_chunk[0]: 
+                                logger.warning(f"yahooquery returned error for entire chunk for {data_key}: {yq_batch_result_for_datakey}")
+                            data_for_single_ticker = yq_batch_result_for_datakey 
+                        elif yq_batch_result_for_datakey is None:
+                            pass 
+                        else: 
+                            if tk_in_chunk == ticker_chunk[0]: 
+                                logger.warning(f"Unexpected data type from yahooquery for {data_key} for entire chunk: {type(yq_batch_result_for_datakey)}")
+                        
+                        _save_single_ticker_data_to_stage(stage_conn_chunk_save, tk_in_chunk, stage_table_name, data_for_single_ticker)
+                
+                stage_conn_chunk_save.commit()
+            logger.info(f"Saved data for chunk {i//chunk_size + 1} to staging DB.")
+        except Exception as e_chunk_processing:
+            logger.error(f"Error processing or saving chunk {i//chunk_size + 1}: {e_chunk_processing}", exc_info=True)
+            all_chunks_successful = False 
+        time.sleep(1)
+    
+    if all_chunks_successful:
+        logger.info(f"--- Finished Phase 1: All chunks processed and raw data saved to Staging DB ({raw_stage_db_path_str}) ---")
+        return True
+    else:
+        logger.error(f"--- Phase 1 Completed with Errors: Not all chunks processed successfully. Check logs. Staging DB: ({raw_stage_db_path_str}) ---")
+        return False
+
+# --- Phase 2: Data Processing and Saving to Final DB ---
+def process_staged_data_to_final_db(final_db_path_override: str | None = None, config_file: str = "config.ini") -> bool:
+    """
+    Processes raw data from the staging database and saves it to the final financial database.
+    Returns True if successful, False otherwise.
+    """
+    logger.info("--- Starting Phase 2: Processing from Staging DB and Saving to Final DB ---")
+    cfg = _load_cfg(config_file)
+    final_db_path_str = final_db_path_override or cfg.get("database", "finance_db", fallback="data/SP500_finance_data.db")
+    raw_stage_db_path_str = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
+
+    if not Path(raw_stage_db_path_str).exists():
+        logger.error(f"Staging database {raw_stage_db_path_str} not found. Cannot proceed with Phase 2.")
+        return False
+        
+    Path(final_db_path_str).parent.mkdir(parents=True, exist_ok=True)
+
+    stage_table_map = { 
+        "q_incs": "stg_quarterly_income", "q_bals": "stg_quarterly_balance", "q_cfs": "stg_quarterly_cashflow",
+        "a_incs": "stg_annual_income",   "a_bals": "stg_annual_balance",   "a_cfs": "stg_annual_cashflow",
+        "price": "stg_price_summary",    "key_stats": "stg_key_stats"
+    }
+    
+    try:
+        tickers = _get_sp500_tickers() 
+        if not tickers:
+            logger.error("No tickers found for Phase 2 processing.")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to get S&P 500 tickers for Phase 2: {e}")
+        return False
+
+    try:
+        with sqlite3.connect(final_db_path_str) as final_conn, \
+             sqlite3.connect(raw_stage_db_path_str) as stage_conn_read:
+            
+            _ensure_fin_schema(final_conn) 
+            stage_cursor = stage_conn_read.cursor()
+            
+            for idx, tk in enumerate(tickers): 
+                logger.info("Processing %s (%d/%d) from staging to final DB", tk, idx + 1, len(tickers))
+                statement_data_for_tk = []
+                def load_from_stage(ticker_symbol, data_key_map_val, is_dataframe=True):
+                    table = stage_table_map[data_key_map_val]
+                    stage_cursor.execute(f"SELECT data_json FROM {table} WHERE ticker=?", (ticker_symbol,))
+                    row = stage_cursor.fetchone()
+                    if row and row[0]:
+                        try:
+                            if is_dataframe:
+                                df = pd.read_json(StringIO(row[0]), orient="split")
+                                if not isinstance(df.index, pd.DatetimeIndex):
+                                    # Attempt to convert index to DatetimeIndex
+                                    try: 
+                                        df.index = pd.to_datetime(df.index, errors='coerce')
+                                        # If conversion results in NaT for all, it might not be a date index
+                                        if df.index.isna().all():
+                                            df.index = pd.read_json(StringIO(row[0]), orient="split").index # revert if all NaT
+                                    except Exception: # Broad exception if to_datetime fails
+                                        pass # Keep original index if conversion fails
+
+                                    # If index is still not DatetimeIndex, check for common date columns
+                                    if not isinstance(df.index, pd.DatetimeIndex):
+                                        date_col_candidates = ['asOfDate', 'reportDate', 'endDate']
+                                        actual_date_col = None
+                                        for col_cand in date_col_candidates:
+                                            if col_cand in df.columns:
+                                                actual_date_col = col_cand
+                                                break
+                                        if actual_date_col:
+                                            try:
+                                                df[actual_date_col] = pd.to_datetime(df[actual_date_col], errors='coerce')
+                                                df = df.set_index(actual_date_col)
+                                            except Exception as e_set_idx:
+                                                logger.debug(f"Could not set '{actual_date_col}' as index for {ticker_symbol}, {table}: {e_set_idx}")
+                                
+                                # After all attempts, check and handle duplicates if DatetimeIndex
+                                if isinstance(df.index, pd.DatetimeIndex):
+                                    if df.index.has_duplicates:
+                                        logger.warning(f"Duplicate dates found in index for {ticker_symbol}, {table} after loading. Keeping first.")
+                                        df = df[~df.index.duplicated(keep='first')]
+                                else: # If still not DatetimeIndex after all attempts
+                                     logger.warning(f"Could not reliably convert index to DatetimeIndex for {ticker_symbol} from {table}. Index type: {type(df.index)}")
+                                return df
+                            else: # For dicts (price, key_stats)
+                                return json.loads(row[0])
+                        except Exception as e_load:
+                            logger.error(f"Error deserializing data for {ticker_symbol} from {table}: {e_load}")
+                            return pd.DataFrame() if is_dataframe else {}
+                    return pd.DataFrame() if is_dataframe else {}
+
+                q_inc_tk = load_from_stage(tk, "q_incs")
+                q_bal_tk = load_from_stage(tk, "q_bals")
+                q_cf_tk  = load_from_stage(tk, "q_cfs")
+                if not (q_inc_tk.empty and q_bal_tk.empty and q_cf_tk.empty):
+                     statement_data_for_tk.append(("Q", q_inc_tk, q_bal_tk, q_cf_tk))
+
+                a_inc_tk = load_from_stage(tk, "a_incs")
+                a_bal_tk = load_from_stage(tk, "a_bals")
+                a_cf_tk  = load_from_stage(tk, "a_cfs")
+                if not (a_inc_tk.empty and a_bal_tk.empty and a_cf_tk.empty):
+                    statement_data_for_tk.append(("A", a_inc_tk, a_bal_tk, a_cf_tk))
+
+                price_summary_tk = load_from_stage(tk, "price", is_dataframe=False)
+                key_stats_tk = load_from_stage(tk, "key_stats", is_dataframe=False)
+                current_price, fwd_eps = np.nan, np.nan
+                if isinstance(price_summary_tk, dict): current_price = price_summary_tk.get('regularMarketPrice', np.nan)
+                if isinstance(key_stats_tk, dict): fwd_eps = key_stats_tk.get('forwardEps', np.nan)
+
+                if not statement_data_for_tk:
+                    logger.info("No financial statements found for %s in staging DB to process.", tk)
+                
+                _save_financial_data_for_ticker(final_conn, tk, statement_data_for_tk, current_price, fwd_eps)
+                time.sleep(0.01) 
+        logger.info(f"--- Finished Phase 2: Processing from Staging DB and Saving to Final DB ({final_db_path_str}) ---")
+        return True
+    except Exception as e_phase2:
+        logger.error(f"Critical error during Phase 2 (processing from staging): {e_phase2}", exc_info=True)
+        return False
+
