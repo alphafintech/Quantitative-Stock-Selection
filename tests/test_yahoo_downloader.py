@@ -2,6 +2,12 @@ import sqlite3
 import unittest
 import importlib.util
 import sys, types
+from pathlib import Path
+
+# Ensure the repository root is on the module search path so that
+# 'yahoo_downloader.py' can be imported when tests are executed from
+# the 'tests' directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 pandas_spec = importlib.util.find_spec("pandas")
 numpy_spec = importlib.util.find_spec("numpy")
