@@ -27,8 +27,10 @@ class RealFinanceDbExportTest(unittest.TestCase):
         self.output_path = Path(__file__).with_name(f"{self.ticker}_financials.xlsx")
 
     def tearDown(self):
-        if self.output_path.exists():
-            self.output_path.unlink()
+        """Preserve the exported Excel file for inspection."""
+        # Intentionally do not remove the output file so the results
+        # remain available after the test run.
+        pass
 
     def test_export_ticker_financials(self):
         if not self.db_path.exists():
