@@ -35,22 +35,15 @@ class RealFinanceDbExportTest(unittest.TestCase):
             self.skipTest(f"Database not found: {self.db_path}")
 
         with sqlite3.connect(self.db_path) as conn:
-            annual = pd.read_sql(
-                "SELECT * FROM annual_financials WHERE UPPER(ticker)=UPPER(?)",
-                conn,
-                params=(self.ticker,),
-            )
-            quarterly = pd.read_sql(
-                "SELECT * FROM quarterly_financials WHERE UPPER(ticker)=UPPER(?)",
+            raw = pd.read_sql(
+                "SELECT * FROM raw_financials WHERE UPPER(ticker)=UPPER(?)",
                 conn,
                 params=(self.ticker,),
             )
 
         with pd.ExcelWriter(self.output_path, engine="openpyxl") as writer:
-            if not annual.empty:
-                annual.to_excel(writer, sheet_name="Annual_Data", index=False)
-            if not quarterly.empty:
-                quarterly.to_excel(writer, sheet_name="Quarterly_Data", index=False)
+            if not raw.empty:
+                raw.to_excel(writer, sheet_name="Raw_Data", index=False)
 
         self.assertTrue(self.output_path.exists())
 
