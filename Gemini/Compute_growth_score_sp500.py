@@ -1209,8 +1209,12 @@ def compute_growth_score(db_path: str | None = None):
         # Get the path to the FINAL finance_db (populated by the migration script) from ROOT config.ini
         # This will be the source DB for copying to a working DB for this script.
         # The _get_finance_db function in THIS SCRIPT is designed to read from the root config.
-        source_final_db_path_str = _get_finance_db(str(root_config_ini_path)) # Pass root config path
+        source_final_db_path_str = _get_finance_db(str(root_config_ini_path))  # Pass root config path
         source_final_db = Path(source_final_db_path_str)
+        if not source_final_db.is_absolute():
+            # Resolve relative paths against the root config location so that a
+            # value like "Gemini/DB.db" works even after changing directories.
+            source_final_db = (root_config_ini_path.parent / source_final_db).resolve()
 
         if not source_final_db.exists():
             logging.error(f"Source final database '{source_final_db}' (expected to be populated by migration) not found. Cannot proceed.")
