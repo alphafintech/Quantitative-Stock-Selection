@@ -3,6 +3,12 @@ import sqlite3
 import configparser
 from pathlib import Path
 import importlib.util
+import sys
+
+# Ensure the repository root is on the module search path so that
+# modules can be imported when tests are executed from the 'tests'
+# directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 pandas_spec = importlib.util.find_spec("pandas")
 openpyxl_spec = importlib.util.find_spec("openpyxl")
