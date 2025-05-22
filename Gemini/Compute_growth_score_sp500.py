@@ -1220,23 +1220,18 @@ def compute_growth_score(db_path: str | None = None):
             logging.error(f"Source final database '{source_final_db}' (expected to be populated by migration) not found. Cannot proceed.")
             return False # Indicate failure
 
-        # Define a working copy name for this script.
-        # If db_path is provided externally, use it. Otherwise, construct from script's config.
+        # Determine which database path to use. If db_path is provided, it takes precedence.
         if db_path:
-            working_db_path = Path(db_path)
+            finance_db_path = Path(db_path)
         else:
-            # Use 'db_name' from this script's config (config_finance.ini) to name the working copy.
-            # The original 'db_name' key from the uploaded file is used here.
-            working_db_filename = script_specific_config.get('Data', {}).get('db_name', f"{source_final_db.stem}_working_copy.db")
-            working_db_path = current_script_dir / working_db_filename 
+            # Use the migrated finance database directly without creating a working copy.
+            finance_db_path = source_final_db
 
-        working_db_path.parent.mkdir(parents=True, exist_ok=True) # Ensure directory for working_db exists
-        shutil.copy2(source_final_db, working_db_path) 
-        logging.info(f"Copied migrated finance database from '{source_final_db}' to working copy '{working_db_path}'")
+        finance_db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = create_db_connection(str(working_db_path))
+        conn = create_db_connection(str(finance_db_path))
         if not conn:
-            logging.critical("Failed to establish database connection to working copy. Exiting.")
+            logging.critical("Failed to establish database connection. Exiting.")
             return False 
         create_tables(conn) # Ensures annual_financials and quarterly_financials tables exist
 
