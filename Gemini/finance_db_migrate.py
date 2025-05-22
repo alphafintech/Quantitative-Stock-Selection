@@ -252,21 +252,33 @@ def migrate_connection(target_conn: sqlite3.Connection, source_stage_db_path: st
 
             if all_annual_dfs:
                 final_annual_df = pd.concat(all_annual_dfs)
+                # Deduplicate by ticker/period to avoid UNIQUE constraint violations
+                before_dedup = len(final_annual_df)
+                final_annual_df = final_annual_df.drop_duplicates(subset=["ticker", "period"], keep="first")
+                after_dedup = len(final_annual_df)
+                if after_dedup < before_dedup:
+                    logger.info(f"Dropped {before_dedup - after_dedup} duplicate annual rows during migration")
                 for col in TARGET_FINANCIAL_COLS:
                     if col not in ["ticker", "period"]:
                         final_annual_df[col] = pd.to_numeric(final_annual_df[col], errors='coerce')
-                
-                target_cursor.execute(f"DELETE FROM {ANNUAL_FINANCIALS_TABLE}") 
+
+                target_cursor.execute(f"DELETE FROM {ANNUAL_FINANCIALS_TABLE}")
                 final_annual_df.to_sql(ANNUAL_FINANCIALS_TABLE, target_conn, if_exists="append", index=False)
                 logger.info(f"Saved {len(final_annual_df)} records to {ANNUAL_FINANCIALS_TABLE}")
 
             if all_quarterly_dfs:
                 final_quarterly_df = pd.concat(all_quarterly_dfs)
+                # Deduplicate by ticker/period to avoid UNIQUE constraint violations
+                before_dedup_q = len(final_quarterly_df)
+                final_quarterly_df = final_quarterly_df.drop_duplicates(subset=["ticker", "period"], keep="first")
+                after_dedup_q = len(final_quarterly_df)
+                if after_dedup_q < before_dedup_q:
+                    logger.info(f"Dropped {before_dedup_q - after_dedup_q} duplicate quarterly rows during migration")
                 for col in TARGET_FINANCIAL_COLS:
                     if col not in ["ticker", "period"]:
                         final_quarterly_df[col] = pd.to_numeric(final_quarterly_df[col], errors='coerce')
 
-                target_cursor.execute(f"DELETE FROM {QUARTERLY_FINANCIALS_TABLE}") 
+                target_cursor.execute(f"DELETE FROM {QUARTERLY_FINANCIALS_TABLE}")
                 final_quarterly_df.to_sql(QUARTERLY_FINANCIALS_TABLE, target_conn, if_exists="append", index=False)
                 logger.info(f"Saved {len(final_quarterly_df)} records to {QUARTERLY_FINANCIALS_TABLE}")
             
