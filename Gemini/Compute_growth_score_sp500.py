@@ -13,14 +13,26 @@ import os
 import shutil
 import warnings
 import sys
+from pathlib import Path # 如果尚未导入，请添加
 
-
+# --- Attempt to import the migration function ---
+# This assumes finance_db_migrate.py is in the same directory as this script
+try:
+    from finance_db_migrate import migrate_staged_db_to_final
+    MIGRATION_FUNCTION_AVAILABLE = True
+except ImportError as e:
+    MIGRATION_FUNCTION_AVAILABLE = False
+    # Define a dummy function if import fails, so the script can potentially still run (though migration won't happen)
+    def migrate_staged_db_to_final(config_file: str) -> bool:
+        logging.error(f"Could not import migrate_staged_db_to_final from finance_db_migrate: {e}. Ensure finance_db_migrate.py is in the same directory or accessible via PYTHONPATH. Migration will be skipped.")
+        return False
+    
 def _get_finance_db(cfg_path: str = "config.ini") -> str:
     """Return finance DB path from config or default."""
     parser = configparser.ConfigParser()
     if os.path.exists(cfg_path):
         parser.read(cfg_path)
-    return parser.get("database", "finance_db", fallback="Gemini_finance_data.db")
+    return parser.get("database", "finance_db", fallback="SP500_finance_data.db")
 
 # --- Configuration & Logging Setup ---
 warnings.filterwarnings('ignore', category=FutureWarning) # Ignore yfinance/pandas future warnings
@@ -1149,59 +1161,84 @@ def compute_growth_score(db_path: str | None = None):
             used.
     """
     run_start_time = time.time()
+    
+    # --- Determine path to ROOT config.ini (parent directory) ---
+    current_script_dir = Path(__file__).resolve().parent
+    root_dir = current_script_dir.parent
+    root_config_ini_path = root_dir / "config.ini" # Path to config.ini in the root directory
+
     try:
-        config = load_config()
-        log_level_setting = config.get('General', {}).get('log_level', 'INFO')
+        # Load this script's specific config (e.g., config_finance.ini)
+        script_specific_config = load_config() # Uses CONFIG_FILE global (defined at the top of the script)
+        log_level_setting = script_specific_config.get('General', {}).get('log_level', 'INFO')
+        log_to_file_setting = script_specific_config.get('General', {}).get('log_to_file', False)
         setup_logging(
             log_level_str=log_level_setting,
-            log_to_file=config.get('General', {}).get('log_to_file', False)
+            log_to_file=log_to_file_setting
         )
-        logging.info("--- Growth Score Script Starting ---")
+        logging.info(f"--- Growth Score Script Starting (Compute_growth_score_sp500.py) ---")
+        logging.info(f"Using script-specific config: {CONFIG_FILE}") # Corrected to use CONFIG_FILE
+        logging.info(f"Using root config for DB paths: {root_config_ini_path}")
 
     except (FileNotFoundError, ValueError, RuntimeError, KeyError) as e:
-        print(f"CRITICAL CONFIGURATION ERROR: {e}")
-        logging.critical(f"CRITICAL CONFIGURATION ERROR: {e}", exc_info=True)
-        return False
+        print(f"CRITICAL SCRIPT CONFIGURATION ERROR: {e}") 
+        logging.critical(f"CRITICAL SCRIPT CONFIGURATION ERROR: {e}", exc_info=True)
+        return False # Indicate failure
 
-    data_cfg = config.get('Data', {})
+    # --- Call data migration from staging to final DB ---
+    # This uses the root_config_ini_path
+    if MIGRATION_FUNCTION_AVAILABLE:
+        logging.info(f"Attempting data migration using root config: {str(root_config_ini_path)}")
+        migration_successful = migrate_staged_db_to_final(config_file=str(root_config_ini_path))
+        if not migration_successful:
+            logging.error("Data migration from staging to final DB failed. Growth scores might be based on outdated data or fail entirely.")
+            # Consider exiting if migration is critical: return False 
+        else:
+            logging.info("Data migration from staging to final DB successful or was not needed by migrate script.")
+    else:
+        logging.warning("Migration function 'migrate_staged_db_to_final' not available (import failed). Skipping migration step.")
 
-    # --- Database Connection & Setup ---
+
+    # --- Database Connection & Setup for this script's processing ---
     conn = None
     try:
-        project_root = Path(__file__).resolve().parent.parent
-        src_db = Path(_get_finance_db(str(project_root / "config.ini")))
-        if not src_db.is_absolute():
-            src_db = project_root / src_db
-        src_db = src_db.resolve()
+        # Get the path to the FINAL finance_db (populated by the migration script) from ROOT config.ini
+        # This will be the source DB for copying to a working DB for this script.
+        # The _get_finance_db function in THIS SCRIPT is designed to read from the root config.
+        source_final_db_path_str = _get_finance_db(str(root_config_ini_path)) # Pass root config path
+        source_final_db = Path(source_final_db_path_str)
 
-        dest_name = db_path or data_cfg.get('db_name') or src_db.name
-        dest_path = Path(dest_name)
-        if not dest_path.is_absolute():
-            dest_path = Path(__file__).resolve().parent / dest_path
-        dest_path = dest_path.resolve()
+        if not source_final_db.exists():
+            logging.error(f"Source final database '{source_final_db}' (expected to be populated by migration) not found. Cannot proceed.")
+            return False # Indicate failure
 
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_db, dest_path)
-        logging.info(f"Copied finance database to {dest_path}")
+        # Define a working copy name for this script.
+        # If db_path is provided externally, use it. Otherwise, construct from script's config.
+        if db_path:
+            working_db_path = Path(db_path)
+        else:
+            # Use 'db_name' from this script's config (config_finance.ini) to name the working copy.
+            # The original 'db_name' key from the uploaded file is used here.
+            working_db_filename = script_specific_config.get('Data', {}).get('db_name', f"{source_final_db.stem}_working_copy.db")
+            working_db_path = current_script_dir / working_db_filename 
 
-        conn = create_db_connection(str(dest_path))
+        working_db_path.parent.mkdir(parents=True, exist_ok=True) # Ensure directory for working_db exists
+        shutil.copy2(source_final_db, working_db_path) 
+        logging.info(f"Copied migrated finance database from '{source_final_db}' to working copy '{working_db_path}'")
+
+        conn = create_db_connection(str(working_db_path))
         if not conn:
-            logging.critical("Failed to establish database connection. Exiting.")
-            return False
-        create_tables(conn)
-        try:
-            from .finance_db_migrate import migrate_connection
-            if migrate_connection(conn):
-                logging.info("Database migrated from raw_financials table")
-        except Exception as e:
-            logging.error(f"Migration step failed: {e}")
+            logging.critical("Failed to establish database connection to working copy. Exiting.")
+            return False 
+        create_tables(conn) # Ensures annual_financials and quarterly_financials tables exist
 
-    except (KeyError, OSError, sqlite3.Error) as e:
-         logging.critical(f"Database setup/clearing error: {e}. Exiting.")
-         if conn:
-             conn.close()
-         return False
+        # The old internal migration call (if any was present here) is now removed, as the new one is called earlier.
 
+    except (KeyError, OSError, sqlite3.Error, FileNotFoundError) as e: 
+         logging.critical(f"Database setup or copying error: {e}. Exiting.", exc_info=True)
+         if conn: conn.close()
+         return False 
+    config = script_specific_config # Use the loaded config for this script
     # --- Get Tickers and Industries ---
     tickers_industries_dict = {}
     industry_df = pd.DataFrame() # Initialize
@@ -1359,6 +1396,4 @@ def compute_growth_score(db_path: str | None = None):
     logging.info(f"--- Growth Score Script Finished --- Duration: {run_end_time - run_start_time:.2f} seconds ---")
     return True
 
-# --- Entry Point ---
-if __name__ == "__main__":
-    compute_growth_score()
+

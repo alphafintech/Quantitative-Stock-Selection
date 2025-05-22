@@ -311,33 +311,51 @@ def _save_financial_data_for_ticker(
         valid_inc = isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(inc_df.index, pd.DatetimeIndex)
         valid_bal = isinstance(bal_df, pd.DataFrame) and not bal_df.empty and isinstance(bal_df.index, pd.DatetimeIndex)
         valid_cf  = isinstance(cf_df, pd.DataFrame) and not cf_df.empty and isinstance(cf_df.index, pd.DatetimeIndex)
-        if not (valid_inc or valid_bal or valid_cf):
-            logger.debug("No valid statement DataFrames for %s, period %s (final processing).", ticker, period_type)
+        
+        if not (valid_inc and valid_bal and valid_cf): 
+            if not valid_inc: logger.debug("Income statement for %s, period %s is invalid or has non-DatetimeIndex.", ticker, period_type)
+            if not valid_bal: logger.debug("Balance sheet for %s, period %s is invalid or has non-DatetimeIndex.", ticker, period_type)
+            if not valid_cf:  logger.debug("Cash flow statement for %s, period %s is invalid or has non-DatetimeIndex.", ticker, period_type)
+            logger.warning("Skipping period %s for ticker %s due to invalid/empty DataFrame(s) or non-DatetimeIndex after loading.", period_type, ticker)
             continue
-        all_indices = pd.Index([])
+
+        all_indices = pd.DatetimeIndex([]) # Initialize as DatetimeIndex
         if valid_inc: all_indices = all_indices.union(inc_df.index)
         if valid_bal: all_indices = all_indices.union(bal_df.index)
         if valid_cf:  all_indices = all_indices.union(cf_df.index)
-        if all_indices.empty:
-            logger.debug("No common dates found for %s, period %s (final processing).", ticker, period_type)
+        
+        if all_indices.empty: 
+            logger.debug("No common dates found for %s, period %s (final processing), though individual DFs were valid.", ticker, period_type)
             continue
+            
         idx_to_process = all_indices
+        
+        # Ensure idx_to_process is indeed a DatetimeIndex before proceeding
+        if not isinstance(idx_to_process, pd.DatetimeIndex):
+            logger.error(f"Critical: idx_to_process for {ticker}, period {period_type} is not a DatetimeIndex (type: {type(idx_to_process)}). Skipping this period.")
+            continue
+
+        current_idx_tz = idx_to_process.tz # Now this should be safe
+
         last_db_date = _latest_report_date(conn, ticker, period_type) 
         if last_db_date is not None:
-            current_idx_tz = idx_to_process.tz
+            # Timezone comparison logic
             if current_idx_tz is not None and last_db_date.tzinfo is None:
                 last_db_date = pd.Timestamp(last_db_date).tz_localize(current_idx_tz)
             elif current_idx_tz is None and last_db_date.tzinfo is not None:
                 last_db_date = last_db_date.tz_localize(None)
+            
             mask = idx_to_process > last_db_date
             idx_to_process = idx_to_process[mask]
             if idx_to_process.empty:
                 logger.info("No new %s data for %s since %s (final DB check).", period_type, ticker, last_db_date.strftime('%Y-%m-%d'))
                 continue
         logger.info("Processing %d new %s report(s) for %s (for final DB).", len(idx_to_process), period_type, ticker)
-        inc_df_reindexed = inc_df.reindex(idx_to_process) if valid_inc else pd.DataFrame(index=idx_to_process)
-        bal_df_reindexed = bal_df.reindex(idx_to_process) if valid_bal else pd.DataFrame(index=idx_to_process)
-        cf_df_reindexed  = cf_df.reindex(idx_to_process) if valid_cf  else pd.DataFrame(index=idx_to_process)
+        
+        inc_df_reindexed = inc_df.reindex(idx_to_process) 
+        bal_df_reindexed = bal_df.reindex(idx_to_process) 
+        cf_df_reindexed  = cf_df.reindex(idx_to_process) 
+        
         out = pd.DataFrame(index=idx_to_process)
         out["ticker"] = ticker
         out["report_date"] = idx_to_process 
@@ -397,6 +415,40 @@ def _save_financial_data_for_ticker(
             logger.info("No new data to save for ticker %s to final DB after processing all periods.", ticker)
     else:
         logger.info("No dataframes were prepared for saving for ticker %s to final DB.", ticker)
+
+# --- Helper function to save single ticker data to staging DB ---
+def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: str, table_name: str, data_to_save: Any):
+    """
+    Serializes and saves data for a single ticker for a single data type to the staging DB.
+    'data_to_save' can be a DataFrame, dict, or an error string from yahooquery.
+    """
+    json_data_str = None
+    if isinstance(data_to_save, pd.DataFrame):
+        if not data_to_save.empty:
+            try:
+                # orient='split' is good for DataFrames with DatetimeIndex
+                json_data_str = data_to_save.to_json(orient="split", date_format="iso", default_handler=str)
+            except Exception as e_json:
+                logger.error(f"Error serializing DataFrame to JSON for {ticker}, table {table_name}: {e_json}")
+    elif isinstance(data_to_save, dict):
+        try:
+            json_data_str = json.dumps(data_to_save)
+        except Exception as e_json:
+            logger.error(f"Error serializing dict to JSON for {ticker}, table {table_name}: {e_json}")
+    elif isinstance(data_to_save, str): # Likely an error message from yahooquery
+        logger.warning(f"yahooquery returned error for {ticker}, data intended for {table_name}: {data_to_save}")
+    elif data_to_save is not None: 
+        logger.warning(f"Unexpected data type for {ticker}, table {table_name}: {type(data_to_save)}. Cannot serialize.")
+
+    if json_data_str:
+        try:
+            stage_conn.execute(
+                f"INSERT OR REPLACE INTO {table_name} (ticker, data_json) VALUES (?, ?)",
+                (ticker, json_data_str)
+            )
+        except sqlite3.Error as e_sql:
+            logger.error(f"Error saving to staging DB for {ticker}, {table_name}: {e_sql}")
+
 
 # --- Helper function to save single ticker data to staging DB ---
 def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: str, table_name: str, data_to_save: Any):
@@ -626,6 +678,7 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
 def process_staged_data_to_final_db(final_db_path_override: str | None = None, config_file: str = "config.ini") -> bool:
     """
     Processes raw data from the staging database and saves it to the final financial database.
+    Deletes the final_db if it already exists.
     Returns True if successful, False otherwise.
     """
     logger.info("--- Starting Phase 2: Processing from Staging DB and Saving to Final DB ---")
@@ -633,11 +686,22 @@ def process_staged_data_to_final_db(final_db_path_override: str | None = None, c
     final_db_path_str = final_db_path_override or cfg.get("database", "finance_db", fallback="data/SP500_finance_data.db")
     raw_stage_db_path_str = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
 
+    # Delete the final database if it already exists
+    final_db_path = Path(final_db_path_str)
+    if final_db_path.exists():
+        try:
+            os.remove(final_db_path)
+            logger.info(f"Successfully deleted existing final database: {final_db_path_str}")
+        except OSError as e:
+            logger.error(f"Error deleting existing final database {final_db_path_str}: {e}")
+            return False # Stop if deletion fails
+
     if not Path(raw_stage_db_path_str).exists():
         logger.error(f"Staging database {raw_stage_db_path_str} not found. Cannot proceed with Phase 2.")
         return False
+      
         
-    Path(final_db_path_str).parent.mkdir(parents=True, exist_ok=True)
+    final_db_path.parent.mkdir(parents=True, exist_ok=True) # Ensure directory exists
 
     stage_table_map = { 
         "q_incs": "stg_quarterly_income", "q_bals": "stg_quarterly_balance", "q_cfs": "stg_quarterly_cashflow",
@@ -672,18 +736,19 @@ def process_staged_data_to_final_db(final_db_path_override: str | None = None, c
                         try:
                             if is_dataframe:
                                 df = pd.read_json(StringIO(row[0]), orient="split")
+                                # Attempt to ensure DatetimeIndex and handle duplicates
                                 if not isinstance(df.index, pd.DatetimeIndex):
-                                    # Attempt to convert index to DatetimeIndex
+                                    original_index = df.index # Keep a copy
                                     try: 
                                         df.index = pd.to_datetime(df.index, errors='coerce')
-                                        # If conversion results in NaT for all, it might not be a date index
-                                        if df.index.isna().all():
-                                            df.index = pd.read_json(StringIO(row[0]), orient="split").index # revert if all NaT
-                                    except Exception: # Broad exception if to_datetime fails
-                                        pass # Keep original index if conversion fails
+                                        if df.index.isna().all(): # If all became NaT, conversion likely failed
+                                            df.index = original_index # Revert to original if all NaT
+                                            logger.debug(f"Index for {ticker_symbol}, {table} could not be converted to Datetime; reverted to original.")
+                                    except Exception as e_dt_conv: 
+                                        logger.debug(f"Error converting index to Datetime for {ticker_symbol}, {table}: {e_dt_conv}. Keeping original.")
+                                        df.index = original_index # Revert on error
 
-                                    # If index is still not DatetimeIndex, check for common date columns
-                                    if not isinstance(df.index, pd.DatetimeIndex):
+                                    if not isinstance(df.index, pd.DatetimeIndex): # Check again
                                         date_col_candidates = ['asOfDate', 'reportDate', 'endDate']
                                         actual_date_col = None
                                         for col_cand in date_col_candidates:
@@ -694,15 +759,20 @@ def process_staged_data_to_final_db(final_db_path_override: str | None = None, c
                                             try:
                                                 df[actual_date_col] = pd.to_datetime(df[actual_date_col], errors='coerce')
                                                 df = df.set_index(actual_date_col)
+                                                if df.index.isna().all(): # If setting index resulted in all NaT
+                                                    logger.warning(f"Setting '{actual_date_col}' as index for {ticker_symbol}, {table} resulted in all NaT. Reverting index.")
+                                                    df = pd.read_json(StringIO(row[0]), orient="split") # Reload original to reset index
                                             except Exception as e_set_idx:
                                                 logger.debug(f"Could not set '{actual_date_col}' as index for {ticker_symbol}, {table}: {e_set_idx}")
                                 
-                                # After all attempts, check and handle duplicates if DatetimeIndex
                                 if isinstance(df.index, pd.DatetimeIndex):
                                     if df.index.has_duplicates:
                                         logger.warning(f"Duplicate dates found in index for {ticker_symbol}, {table} after loading. Keeping first.")
                                         df = df[~df.index.duplicated(keep='first')]
-                                else: # If still not DatetimeIndex after all attempts
+                                    # Ensure timezone is naive if it exists, as DB dates are naive
+                                    if df.index.tz is not None:
+                                        df.index = df.index.tz_localize(None)
+                                else: 
                                      logger.warning(f"Could not reliably convert index to DatetimeIndex for {ticker_symbol} from {table}. Index type: {type(df.index)}")
                                 return df
                             else: # For dicts (price, key_stats)
@@ -715,14 +785,25 @@ def process_staged_data_to_final_db(final_db_path_override: str | None = None, c
                 q_inc_tk = load_from_stage(tk, "q_incs")
                 q_bal_tk = load_from_stage(tk, "q_bals")
                 q_cf_tk  = load_from_stage(tk, "q_cfs")
-                if not (q_inc_tk.empty and q_bal_tk.empty and q_cf_tk.empty):
+                # Only add to statement_data_for_tk if ALL THREE DFs for a period are valid and have DatetimeIndex
+                if (isinstance(q_inc_tk, pd.DataFrame) and not q_inc_tk.empty and isinstance(q_inc_tk.index, pd.DatetimeIndex) and
+                    isinstance(q_bal_tk, pd.DataFrame) and not q_bal_tk.empty and isinstance(q_bal_tk.index, pd.DatetimeIndex) and
+                    isinstance(q_cf_tk, pd.DataFrame) and not q_cf_tk.empty and isinstance(q_cf_tk.index, pd.DatetimeIndex)):
                      statement_data_for_tk.append(("Q", q_inc_tk, q_bal_tk, q_cf_tk))
+                elif not (q_inc_tk.empty and q_bal_tk.empty and q_cf_tk.empty): # If some data exists but not all valid
+                    logger.warning(f"Skipping Quarterly data for {tk} due to one or more invalid/empty statements or non-DatetimeIndex after loading from stage.")
+
 
                 a_inc_tk = load_from_stage(tk, "a_incs")
                 a_bal_tk = load_from_stage(tk, "a_bals")
                 a_cf_tk  = load_from_stage(tk, "a_cfs")
-                if not (a_inc_tk.empty and a_bal_tk.empty and a_cf_tk.empty):
+                if (isinstance(a_inc_tk, pd.DataFrame) and not a_inc_tk.empty and isinstance(a_inc_tk.index, pd.DatetimeIndex) and
+                    isinstance(a_bal_tk, pd.DataFrame) and not a_bal_tk.empty and isinstance(a_bal_tk.index, pd.DatetimeIndex) and
+                    isinstance(a_cf_tk, pd.DataFrame) and not a_cf_tk.empty and isinstance(a_cf_tk.index, pd.DatetimeIndex)):
                     statement_data_for_tk.append(("A", a_inc_tk, a_bal_tk, a_cf_tk))
+                elif not (a_inc_tk.empty and a_bal_tk.empty and a_cf_tk.empty):
+                    logger.warning(f"Skipping Annual data for {tk} due to one or more invalid/empty statements or non-DatetimeIndex after loading from stage.")
+
 
                 price_summary_tk = load_from_stage(tk, "price", is_dataframe=False)
                 key_stats_tk = load_from_stage(tk, "key_stats", is_dataframe=False)
@@ -731,7 +812,7 @@ def process_staged_data_to_final_db(final_db_path_override: str | None = None, c
                 if isinstance(key_stats_tk, dict): fwd_eps = key_stats_tk.get('forwardEps', np.nan)
 
                 if not statement_data_for_tk:
-                    logger.info("No financial statements found for %s in staging DB to process.", tk)
+                    logger.info("No valid financial statements found for %s in staging DB to process for final DB.", tk)
                 
                 _save_financial_data_for_ticker(final_conn, tk, statement_data_for_tk, current_price, fwd_eps)
                 time.sleep(0.01) 
@@ -740,4 +821,3 @@ def process_staged_data_to_final_db(final_db_path_override: str | None = None, c
     except Exception as e_phase2:
         logger.error(f"Critical error during Phase 2 (processing from staging): {e_phase2}", exc_info=True)
         return False
-
