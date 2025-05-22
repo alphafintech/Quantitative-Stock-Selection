@@ -16,15 +16,19 @@ import sys
 from pathlib import Path # 如果尚未导入，请添加
 
 # --- Attempt to import the migration function ---
-# This assumes finance_db_migrate.py is in the same directory as this script
+# finance_db_migrate.py resides in the same Gemini package
 try:
-    from finance_db_migrate import migrate_staged_db_to_final
+    from .finance_db_migrate import migrate_staged_db_to_final
     MIGRATION_FUNCTION_AVAILABLE = True
 except ImportError as e:
     MIGRATION_FUNCTION_AVAILABLE = False
-    # Define a dummy function if import fails, so the script can potentially still run (though migration won't happen)
+    # Define a dummy function if import fails so the script can continue, though migration will be skipped
     def migrate_staged_db_to_final(config_file: str) -> bool:
-        logging.error(f"Could not import migrate_staged_db_to_final from finance_db_migrate: {e}. Ensure finance_db_migrate.py is in the same directory or accessible via PYTHONPATH. Migration will be skipped.")
+        logging.error(
+            f"Could not import migrate_staged_db_to_final from finance_db_migrate: {e}. "
+            "Ensure finance_db_migrate.py is in the Gemini package or accessible via PYTHONPATH. "
+            "Migration will be skipped."
+        )
         return False
     
 def _get_finance_db(cfg_path: str = "config.ini") -> str:
