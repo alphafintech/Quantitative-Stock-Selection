@@ -550,13 +550,14 @@ def test_main_process():
         #yahoo_downloader.process_staged_data_to_final_db()
 
         # 先测试 Gemini
-        change_working_directory(Gemini_dir)
-        gemini_main_pipeline(True)
+        #change_working_directory(Gemini_dir)
+        #gemini_main_pipeline(True)
 
         # 再测试 GPT（若成功导入）
         if GPT_AVAILABLE:
             change_working_directory(GPT_dir)
             gpt_run_pipeline(
+                trend_run_stage=0,
                 update_finance_db=False,
                 recalc_scores=True,
                 do_selection=True

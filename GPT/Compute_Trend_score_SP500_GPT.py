@@ -1333,29 +1333,24 @@ def run_process_control(stage: int, db_path: str | None = None):
     """
     根据 stage 参数控制流程：
       0 → 全流程(强制全量更新DB)
-      1 → 仅 Update_DB
-      2 → 仅指标计算（不含 TrendScore）
-      3 → 仅 TrendScore 计算
+      1 → 仅指标计算（不含 TrendScore）
+      2 → 仅 TrendScore 计算
     """
     if db_path is None:
         db_path = _prepare_gpt_db()
 
     if stage == 0:
-        reset_database(db_path)
-        Update_DB(db_path)
         calculate_and_store_moving_averages(db_path)
         calculate_and_store_other_indicators(db_path)
         calculate_and_store_technical_indicators(db_path)
         calculate_trend_indicators(db_path)
         calculate_and_store_trend_scores(db_path)
     elif stage == 1:
-        Update_DB(db_path)
-    elif stage == 2:
         calculate_and_store_moving_averages(db_path)
         calculate_and_store_other_indicators(db_path)
         calculate_and_store_technical_indicators(db_path)
         calculate_trend_indicators(db_path)
-    elif stage == 3:
+    elif stage == 2:
         calculate_and_store_trend_scores(db_path)
     else:
         print(f"[run_process_control] 未识别的 stage 参数: {stage}，不执行任何操作。")

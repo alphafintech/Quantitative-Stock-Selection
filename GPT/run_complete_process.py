@@ -123,15 +123,12 @@ def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
 # 步骤封装
 # ------------------------------------------------------------
 
-def build_trend_scores(recalc_scores: bool) -> None:
+def build_trend_scores(run_stage) -> None:
     """(Re)calculate trend scores if requested."""
+    stage = run_stage
+    log.info("[Trend] run_process_control(stage=%d)", stage)
+    trend_run_ctrl(stage)
 
-    if recalc_scores:
-        stage = 3
-        log.info("[Trend] run_process_control(stage=%d)", stage)
-        trend_run_ctrl(stage)
-    else:
-        log.info("[Trend] skipped")
 
 
 def build_finance_scores(update_db: bool, recalc_scores: bool) -> None:
@@ -223,6 +220,7 @@ def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
 # ------------------------------------------------------------
 
 def run_pipeline(*,
+                 trend_run_stage: int = 0,
                  update_finance_db: bool = False,
                  recalc_scores: bool = True,
                  do_selection: bool = True,
@@ -231,7 +229,7 @@ def run_pipeline(*,
     log.info("========== PIPELINE START ==========")
 
     # 1) 趋势分
-    build_trend_scores(recalc_scores=recalc_scores)
+    build_trend_scores(trend_run_stage)  # 0: run all stages
 
     # 2) 基本面分
     build_finance_scores(update_db=update_finance_db, recalc_scores=recalc_scores)
