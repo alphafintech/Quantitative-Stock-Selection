@@ -50,14 +50,61 @@ def _get_finance_db(cfg_path: str = "config.ini") -> str:
     return str(db_path)
 
 
-def _prepare_gpt_finance_db(cfg_path: str = "config.ini") -> str:
-    """Process raw financial data into the GPT finance database.
+def _process_staged_to_raw_db(stage_db: Path, out_db: Path) -> None:
+    """Convert JSON staging data to the ``raw_financials`` table format."""
+    from Gemini.finance_db_migrate import (
+        _get_sp500_tickers_from_source,
+        _load_staged_json_to_df,
+    )
+    from yahoo_downloader import _ensure_fin_schema, _save_financial_data_for_ticker
+    import json
 
-    This reads the raw staging database configured in ``cfg_path`` and
-    writes a processed copy to the ``GPT_finance_db`` location.  The
-    heavy-lifting is delegated to ``yahoo_downloader.process_staged_data_to_final_db``.
-    Returns the absolute path to the prepared database.
-    """
+    with sqlite3.connect(out_db) as final_conn, sqlite3.connect(stage_db) as stg_conn:
+        _ensure_fin_schema(final_conn)
+        stg_cur = stg_conn.cursor()
+        tickers = _get_sp500_tickers_from_source(stg_conn)
+        for tk in tqdm(tickers, desc="Adapt", leave=False):
+            q_inc = _load_staged_json_to_df(stg_cur, tk, "stg_quarterly_income")
+            q_bal = _load_staged_json_to_df(stg_cur, tk, "stg_quarterly_balance")
+            q_cf  = _load_staged_json_to_df(stg_cur, tk, "stg_quarterly_cashflow")
+            a_inc = _load_staged_json_to_df(stg_cur, tk, "stg_annual_income")
+            a_bal = _load_staged_json_to_df(stg_cur, tk, "stg_annual_balance")
+            a_cf  = _load_staged_json_to_df(stg_cur, tk, "stg_annual_cashflow")
+
+            stg_cur.execute("SELECT data_json FROM stg_price_summary WHERE ticker=?", (tk,))
+            row = stg_cur.fetchone()
+            price = None
+            if row and row[0]:
+                try:
+                    d = json.loads(row[0])
+                    if isinstance(d, dict):
+                        price = d.get("regularMarketPrice") or d.get("regularMarketPreviousClose")
+                except Exception:
+                    price = None
+
+            stg_cur.execute("SELECT data_json FROM stg_key_stats WHERE ticker=?", (tk,))
+            row = stg_cur.fetchone()
+            fwd_eps = None
+            if row and row[0]:
+                try:
+                    d = json.loads(row[0])
+                    if isinstance(d, dict):
+                        fwd_eps = d.get("forwardEps") or d.get("forwardEPS")
+                except Exception:
+                    fwd_eps = None
+
+            batches = []
+            if not q_inc.empty:
+                batches.append(("Q", q_inc, q_bal, q_cf))
+            if not a_inc.empty:
+                batches.append(("A", a_inc, a_bal, a_cf))
+
+            _save_financial_data_for_ticker(final_conn, tk, batches, price, fwd_eps)
+
+
+def _prepare_gpt_finance_db(cfg_path: str = "config.ini") -> str:
+    """Process raw financial data from the staging DB into GPT's finance DB."""
+
     cfg_file = Path(cfg_path)
     if not cfg_file.exists():
         alt = Path(__file__).resolve().parent.parent / cfg_path
@@ -67,20 +114,22 @@ def _prepare_gpt_finance_db(cfg_path: str = "config.ini") -> str:
     if cfg_file.exists():
         cfg.read(cfg_file)
 
-    gpt_db = cfg.get("database", "GPT_finance_db", fallback="GPT/SP500_finance_data_GPT.db")
-    gpt_path = Path(gpt_db)
-    if not gpt_path.is_absolute():
-        gpt_path = Path(__file__).resolve().parent.parent / gpt_db
+    stage_val = cfg.get("database", "raw_stage_db", fallback="SP500_raw_finance.db")
+    final_val = cfg.get("database", "GPT_finance_db", fallback="GPT/SP500_finance_data_GPT.db")
 
-    from yahoo_downloader import process_staged_data_to_final_db
+    stage_path = Path(stage_val)
+    if not stage_path.is_absolute():
+        stage_path = Path(__file__).resolve().parent.parent / stage_val
 
-    success = process_staged_data_to_final_db(
-        final_db_path_override=str(gpt_path), config_file=str(cfg_file)
-    )
-    if not success:
-        raise RuntimeError("Failed to prepare GPT finance database")
+    final_path = Path(final_val)
+    if not final_path.is_absolute():
+        final_path = Path(__file__).resolve().parent.parent / final_val
 
-    return str(gpt_path)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+
+    _process_staged_to_raw_db(stage_path, final_path)
+
+    return str(final_path)
 
 
 # ══════════════════ CONFIG ═══════════════════════════════════
