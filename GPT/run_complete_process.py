@@ -25,7 +25,7 @@ w_growth      = 0.2                        ; Growth 加成权重
 -------------
 ```bash
 # 使用默认 config_run.ini
-python orchestrator_select.py --update-trend-db --update-finance-db
+python orchestrator_select.py --update-finance-db
 
 # 指定另一个配置文件并仅做筛选
 python orchestrator_select.py --cfg myrun.ini --no-recalc
@@ -123,13 +123,11 @@ def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
 # 步骤封装
 # ------------------------------------------------------------
 
-def build_trend_scores(update_db: bool, recalc_scores: bool) -> None:
-    stage = None
-    if update_db:
-        stage = 0
-    elif recalc_scores:
+def build_trend_scores(recalc_scores: bool) -> None:
+    """(Re)calculate trend scores if requested."""
+
+    if recalc_scores:
         stage = 3
-    if stage is not None:
         log.info("[Trend] run_process_control(stage=%d)", stage)
         trend_run_ctrl(stage)
     else:
@@ -225,7 +223,6 @@ def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
 # ------------------------------------------------------------
 
 def run_pipeline(*,
-                 update_trend_db: bool = False,
                  update_finance_db: bool = False,
                  recalc_scores: bool = True,
                  do_selection: bool = True,
@@ -234,7 +231,7 @@ def run_pipeline(*,
     log.info("========== PIPELINE START ==========")
 
     # 1) 趋势分
-    build_trend_scores(update_db=update_trend_db, recalc_scores=recalc_scores)
+    build_trend_scores(recalc_scores=recalc_scores)
 
     # 2) 基本面分
     build_finance_scores(update_db=update_finance_db, recalc_scores=recalc_scores)
@@ -252,8 +249,7 @@ def run_pipeline(*,
 
 def test_pipeline():
     """Convenience wrapper: 使用当前 config_run.ini 只做评分 + 组合筛选。"""
-    run_pipeline(update_trend_db=False,  # 不刷新历史/价格 DB
-                 update_finance_db=False,  # 不刷新财报 DB
+    run_pipeline(update_finance_db=False,  # 不刷新财报 DB
                  recalc_scores=True,      # 重新计算趋势+基本面分
                  do_selection=True,
                  cfg_run=CFG_RUN)
@@ -267,14 +263,12 @@ def main():
     import argparse
     p = argparse.ArgumentParser(description="S&P500 Trend + Fundamental orchestrator")
     p.add_argument("--cfg", default=str(CFG_RUN), help="path to config_run.ini")
-    p.add_argument("--update-trend-db", action="store_true")
     p.add_argument("--update-finance-db", action="store_true")
     p.add_argument("--no-recalc", dest="recalc", action="store_false")
     p.add_argument("--no-select", dest="select", action="store_false")
     args = p.parse_args()
 
-    run_pipeline(update_trend_db=args.update_trend_db,
-                 update_finance_db=args.update_finance_db,
+    run_pipeline(update_finance_db=args.update_finance_db,
                  recalc_scores=args.recalc,
                  do_selection=args.select,
                  cfg_run=Path(args.cfg))
