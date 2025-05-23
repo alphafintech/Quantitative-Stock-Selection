@@ -36,7 +36,15 @@ def _get_price_db(cfg_path: str = "config.ini") -> str:
 
 
 def _prepare_gpt_db(cfg_path: str = "config.ini") -> str:
-    """Copy the price DB to this folder and return the new path."""
+    """Copy the price DB to this folder and normalize schema.
+
+    The original ``price_db`` is copied to ``gpt_price_db`` so the GPT
+    pipeline can work on its own copy.  After copying, the destination
+    database is inspected.  Whatever the original table name or column
+    casing, the data is normalised into a table ``stock_data`` with the
+    canonical lowercase column names used throughout this project.
+    """
+
     cfg = configparser.ConfigParser()
     path = Path(cfg_path)
     if not path.exists():
@@ -68,17 +76,97 @@ def _prepare_gpt_db(cfg_path: str = "config.ini") -> str:
         print(f"[prepare_gpt_db] Failed to copy {src_path} to {dst_path}: {e}")
         return str(dst_path)
 
-    # Ensure table name is stock_data if source uses a single different name
+    # --- Normalise table structure in the copied database ---
     try:
-        with sqlite3.connect(dst_path) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [r[0] for r in cur.fetchall()]
-            if "stock_data" not in tables and len(tables) == 1:
-                cur.execute(f"ALTER TABLE {tables[0]} RENAME TO stock_data")
-                conn.commit()
+        conn = sqlite3.connect(dst_path)
+        cur = conn.cursor()
+
+        # determine source table
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [r[0] for r in cur.fetchall()]
+        if "stock_data" in tables:
+            src_table = "stock_data"
+        elif len(tables) == 1:
+            src_table = tables[0]
+        else:
+            src_table = None
+
+        if src_table is None:
+            print("[prepare_gpt_db] Could not determine source table name")
+            conn.close()
+            return str(dst_path)
+
+        # mapping from cleaned column name to canonical column
+        canonical = {
+            "ticker": "ticker",
+            "symbol": "ticker",
+            "date": "date",
+            "datetime": "date",
+            "open": "open",
+            "high": "high",
+            "low": "low",
+            "close": "close",
+            "adjclose": "adj_close",
+            "adj_close": "adj_close",
+            "adj close": "adj_close",
+            "volume": "volume",
+        }
+
+        cur.execute(f"PRAGMA table_info({src_table})")
+        cols_info = cur.fetchall()
+        src_cols = [c[1] for c in cols_info]
+
+        mapping = {}
+        for col in src_cols:
+            key = col.lower().replace("_", "").replace(" ", "")
+            if key in canonical:
+                mapping[col] = canonical[key]
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stock_data_norm (
+                ticker TEXT, date TEXT, open REAL, high REAL,
+                low REAL, close REAL, adj_close REAL, volume INTEGER,
+                PRIMARY KEY (ticker, date)
+            )
+            """
+        )
+
+        cur.execute(f"SELECT * FROM {src_table}")
+        desc = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+
+        dest_lookup = {v: k for k, v in mapping.items()}
+        insert_sql = (
+            "INSERT OR IGNORE INTO stock_data_norm "
+            "(ticker, date, open, high, low, close, adj_close, volume) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+
+        for row in rows:
+            row_map = dict(zip(desc, row))
+            vals = [
+                row_map.get(dest_lookup.get("ticker")),
+                row_map.get(dest_lookup.get("date")),
+                row_map.get(dest_lookup.get("open")),
+                row_map.get(dest_lookup.get("high")),
+                row_map.get(dest_lookup.get("low")),
+                row_map.get(dest_lookup.get("close")),
+                row_map.get(dest_lookup.get("adj_close"))
+                if dest_lookup.get("adj_close")
+                else row_map.get(dest_lookup.get("close")),
+                row_map.get(dest_lookup.get("volume")),
+            ]
+            cur.execute(insert_sql, vals)
+
+        # drop old table and rename normalised one
+        cur.execute(f"DROP TABLE {src_table}")
+        cur.execute("ALTER TABLE stock_data_norm RENAME TO stock_data")
+
+        conn.commit()
+        conn.close()
     except Exception as e:
-        print(f"[prepare_gpt_db] Schema check failed: {e}")
+        print(f"[prepare_gpt_db] Schema normalisation failed: {e}")
 
     return str(dst_path)
 
