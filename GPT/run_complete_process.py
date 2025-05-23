@@ -137,7 +137,10 @@ def build_finance_scores(update_db: bool, recalc_scores: bool) -> None:
         FIN_DOWNLOAD()
     if recalc_scores:
         log.info("[Finance] recomputing scores …")
-        metrics = FIN_METRICS()
+        from .compute_high_growth_score_SP500_GPT import _prepare_gpt_finance_db
+
+        db_path = _prepare_gpt_finance_db()
+        metrics = FIN_METRICS(db_path=db_path)
         scores  = FIN_SCORES(metrics)
         FIN_EXPORT(scores)
     if not (update_db or recalc_scores):

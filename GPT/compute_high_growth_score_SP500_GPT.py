@@ -38,7 +38,49 @@ def _get_finance_db(cfg_path: str = "config.ini") -> str:
             path = alt
     if path.exists():
         cfg.read(path)
-    return cfg.get("database", "finance_db", fallback="SP500_finance_data.db")
+    db_val = None
+    if cfg.has_option("database", "GPT_finance_db"):
+        db_val = cfg.get("database", "GPT_finance_db")
+    else:
+        db_val = cfg.get("database", "finance_db", fallback="SP500_finance_data.db")
+
+    db_path = Path(db_val)
+    if not db_path.is_absolute():
+        db_path = Path(__file__).resolve().parent.parent / db_val
+    return str(db_path)
+
+
+def _prepare_gpt_finance_db(cfg_path: str = "config.ini") -> str:
+    """Process raw financial data into the GPT finance database.
+
+    This reads the raw staging database configured in ``cfg_path`` and
+    writes a processed copy to the ``GPT_finance_db`` location.  The
+    heavy-lifting is delegated to ``yahoo_downloader.process_staged_data_to_final_db``.
+    Returns the absolute path to the prepared database.
+    """
+    cfg_file = Path(cfg_path)
+    if not cfg_file.exists():
+        alt = Path(__file__).resolve().parent.parent / cfg_path
+        if alt.exists():
+            cfg_file = alt
+    cfg = configparser.ConfigParser()
+    if cfg_file.exists():
+        cfg.read(cfg_file)
+
+    gpt_db = cfg.get("database", "GPT_finance_db", fallback="GPT/SP500_finance_data_GPT.db")
+    gpt_path = Path(gpt_db)
+    if not gpt_path.is_absolute():
+        gpt_path = Path(__file__).resolve().parent.parent / gpt_db
+
+    from yahoo_downloader import process_staged_data_to_final_db
+
+    success = process_staged_data_to_final_db(
+        final_db_path_override=str(gpt_path), config_file=str(cfg_file)
+    )
+    if not success:
+        raise RuntimeError("Failed to prepare GPT finance database")
+
+    return str(gpt_path)
 
 
 # ══════════════════ CONFIG ═══════════════════════════════════
@@ -108,7 +150,7 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("sp500-growth")
 
 # ═════════════ GLOBAL PARAMS ═════════════════════════════════
-DB_PATH  = Path(CFG["database"].get("db_name", _get_finance_db()))
+DB_PATH  = Path(_get_finance_db())
 engine   = create_engine(f"sqlite:///{DB_PATH}")
 START_DATE = pd.to_datetime(CFG["data"]["start_date"])
 END_DATE   = pd.to_datetime(CFG["data"].get("end_date")) if CFG["data"].get("end_date") else pd.Timestamp.today()
@@ -640,7 +682,8 @@ def export_excel(df: pd.DataFrame, out_path: str | None = None):
 # ---------- main ----------
 def Testmain():
     download_all()              # 如不想更新，可注释
-    metrics = compute_metrics()
+    db_path = _prepare_gpt_finance_db()
+    metrics = compute_metrics(db_path=db_path)
     scores  = calc_scores(metrics)
     export_excel(scores)
 
