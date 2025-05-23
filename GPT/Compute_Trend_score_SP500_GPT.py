@@ -6,6 +6,7 @@ and only downloads the incremental missing data on subsequent runs.
 """
 
 import os
+import shutil
 import configparser
 import sqlite3
 import datetime
@@ -34,8 +35,56 @@ def _get_price_db(cfg_path: str = "config.ini") -> str:
     return cfg.get("database", "price_db", fallback="SP500_price_data.db")
 
 
-# Default database storing historical price data
-DEFAULT_DB_FILE = _get_price_db()
+def _prepare_gpt_db(cfg_path: str = "config.ini") -> str:
+    """Copy the price DB to this folder and return the new path."""
+    cfg = configparser.ConfigParser()
+    path = Path(cfg_path)
+    if not path.exists():
+        alt = Path(__file__).resolve().parent.parent / cfg_path
+        if alt.exists():
+            path = alt
+    if path.exists():
+        cfg.read(path)
+
+    src = cfg.get("database", "price_db", fallback="SP500_price_data.db")
+    dst = cfg.get("database", "gpt_price_db", fallback="SP500_price_data_GPT.db")
+
+    src_path = Path(src)
+    if not src_path.is_absolute():
+        for base in (Path.cwd(), Path(__file__).resolve().parent.parent):
+            candidate = base / src
+            if candidate.exists():
+                src_path = candidate
+                break
+
+    dst_path = Path(dst)
+    if not dst_path.is_absolute():
+        dst_path = Path(__file__).resolve().parent.parent / dst
+
+    try:
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_path, dst_path)
+    except Exception as e:
+        print(f"[prepare_gpt_db] Failed to copy {src_path} to {dst_path}: {e}")
+        return str(dst_path)
+
+    # Ensure table name is stock_data if source uses a single different name
+    try:
+        with sqlite3.connect(dst_path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r[0] for r in cur.fetchall()]
+            if "stock_data" not in tables and len(tables) == 1:
+                cur.execute(f"ALTER TABLE {tables[0]} RENAME TO stock_data")
+                conn.commit()
+    except Exception as e:
+        print(f"[prepare_gpt_db] Schema check failed: {e}")
+
+    return str(dst_path)
+
+
+# Default database storing historical price data (resolved at runtime)
+DEFAULT_DB_FILE = None
 config_file = "config_trend.ini"
 
 
@@ -77,11 +126,13 @@ def read_config(config_file="config.ini"):
     return start_date, end_date
 
 # ----------------- Database Setup ----------------- #
-def init_db(db_file=DEFAULT_DB_FILE):
+def init_db(db_file=None):
     """
     Initialize (or connect to) the local SQLite database and create the required table if it does not exist.
     Returns the connection and cursor.
     """
+    if db_file is None:
+        db_file = _prepare_gpt_db()
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     cursor.execute("""
@@ -1190,7 +1241,7 @@ def reset_database(db_path):
     else:
         print(f"[reset_database] {db_path} does not exist – no need to delete.")
 # ----------------- Process Control Wrapper ----------------- #
-def run_process_control(stage: int, db_path: str = DEFAULT_DB_FILE):
+def run_process_control(stage: int, db_path: str | None = None):
     """
     根据 stage 参数控制流程：
       0 → 全流程(强制全量更新DB)
@@ -1198,6 +1249,9 @@ def run_process_control(stage: int, db_path: str = DEFAULT_DB_FILE):
       2 → 仅指标计算（不含 TrendScore）
       3 → 仅 TrendScore 计算
     """
+    if db_path is None:
+        db_path = _prepare_gpt_db()
+
     if stage == 0:
         reset_database(db_path)
         Update_DB(db_path)
@@ -1224,6 +1278,6 @@ if __name__ == '__main__':
     cfg.read(config_file)
     runstage = int(cfg.get("run_control", "runstage", fallback="0"))
     print(f"[Main] runstage = {runstage}")
-    run_process_control(runstage, _get_price_db())
+    run_process_control(runstage)
 
     
