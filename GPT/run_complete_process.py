@@ -25,7 +25,7 @@ w_growth      = 0.2                        ; Growth 加成权重
 -------------
 ```bash
 # 使用默认 config_run.ini
-python orchestrator_select.py --update-finance-db
+python orchestrator_select.py
 
 # 指定另一个配置文件并仅做筛选
 python orchestrator_select.py --cfg myrun.ini --no-recalc
@@ -49,7 +49,6 @@ CFG_FINANCE  = ROOT / "config_finance.ini"
 # ------------------------------------------------------------
 from .Compute_Trend_score_SP500_GPT import run_process_control as trend_run_ctrl
 from .compute_high_growth_score_SP500_GPT import (
-    download_all as FIN_DOWNLOAD,
     compute_metrics as FIN_METRICS,
     calc_scores as FIN_SCORES,
     export_excel as FIN_EXPORT,
@@ -131,10 +130,7 @@ def build_trend_scores(run_stage) -> None:
 
 
 
-def build_finance_scores(update_db: bool, recalc_scores: bool) -> None:
-    if update_db:
-        log.info("[Finance] refreshing DB …")
-        FIN_DOWNLOAD()
+def build_finance_scores(*, recalc_scores: bool) -> None:
     if recalc_scores:
         log.info("[Finance] recomputing scores …")
         from .compute_high_growth_score_SP500_GPT import _prepare_gpt_finance_db
@@ -143,7 +139,7 @@ def build_finance_scores(update_db: bool, recalc_scores: bool) -> None:
         metrics = FIN_METRICS(db_path=db_path)
         scores  = FIN_SCORES(metrics)
         FIN_EXPORT(scores)
-    if not (update_db or recalc_scores):
+    if not recalc_scores:
         log.info("[Finance] skipped")
 
 
@@ -224,7 +220,6 @@ def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
 
 def run_pipeline(*,
                  trend_run_stage: int = 0,
-                 update_finance_db: bool = False,
                  recalc_scores: bool = True,
                  do_selection: bool = True,
                  cfg_run: Path = CFG_RUN) -> None:
@@ -235,7 +230,7 @@ def run_pipeline(*,
     build_trend_scores(trend_run_stage)  # 0: run all stages
 
     # 2) 基本面分
-    build_finance_scores(update_db=update_finance_db, recalc_scores=recalc_scores)
+    build_finance_scores(recalc_scores=recalc_scores)
 
     # 3) 组合筛选
     if do_selection:
@@ -250,10 +245,10 @@ def run_pipeline(*,
 
 def test_pipeline():
     """Convenience wrapper: 使用当前 config_run.ini 只做评分 + 组合筛选。"""
-    run_pipeline(update_finance_db=False,  # 不刷新财报 DB
-                 recalc_scores=True,      # 重新计算趋势+基本面分
-                 do_selection=True,
-                 cfg_run=CFG_RUN)
+    run_pipeline(
+        recalc_scores=True,      # 重新计算趋势+基本面分
+        do_selection=True,
+        cfg_run=CFG_RUN)
 
 #test_pipeline()
 # ------------------------------------------------------------
@@ -264,12 +259,10 @@ def main():
     import argparse
     p = argparse.ArgumentParser(description="S&P500 Trend + Fundamental orchestrator")
     p.add_argument("--cfg", default=str(CFG_RUN), help="path to config_run.ini")
-    p.add_argument("--update-finance-db", action="store_true")
     p.add_argument("--no-recalc", dest="recalc", action="store_false")
     p.add_argument("--no-select", dest="select", action="store_false")
     args = p.parse_args()
 
-    run_pipeline(update_finance_db=args.update_finance_db,
-                 recalc_scores=args.recalc,
+    run_pipeline(recalc_scores=args.recalc,
                  do_selection=args.select,
                  cfg_run=Path(args.cfg))
