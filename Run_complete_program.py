@@ -208,13 +208,12 @@ def run_main_process():
 
         logging.info("--- 开始执行主流程 (GPT) ---")
         logging.info(
-            f"GPT 参数: update_trend_db=False, update_finance_db=False, recalc_scores={recalc_scores_gpt}, do_selection={do_selection_gpt}"
-        )     
+            f"GPT 参数: update_finance_db=False, recalc_scores={recalc_scores_gpt}, do_selection={do_selection_gpt}"
+        )
         start_time_gpt = time.time()
         try:
             change_working_directory(GPT_dir)
             gpt_run_pipeline(
-                update_trend_db=False,
                 update_finance_db=False,
                 recalc_scores=recalc_scores_gpt,
                 do_selection=do_selection_gpt
@@ -558,7 +557,6 @@ def test_main_process():
         if GPT_AVAILABLE:
             change_working_directory(GPT_dir)
             gpt_run_pipeline(
-                update_trend_db=False,
                 update_finance_db=False,
                 recalc_scores=True,
                 do_selection=True
