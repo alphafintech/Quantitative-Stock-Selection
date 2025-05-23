@@ -117,7 +117,9 @@ def download_price_data(
         with sqlite3.connect(db_path) as conn:
             _ensure_price_schema(conn)
             cur = conn.cursor()
-            tickers = _get_sp500_tickers() 
+            tickers = _get_sp500_tickers()
+            if "SPY" not in tickers:
+                tickers.append("SPY")
 
             ticker_start: Dict[str, str | None] = {}
             for tk in tickers:
