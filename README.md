@@ -18,17 +18,18 @@ All configuration files and helper scripts expect the finance database to be nam
 
 ### Initializing the databases
 
-The pipeline relies on two SQLite databases (price and finance). Before you
-skip the download phases, ensure these databases contain data. On the first run,
-invoke the main script with the update flags enabled so that both databases are
-populated:
+The pipeline relies on two SQLite databases (price and finance). On the first
+run simply execute the script so that both databases are populated with price
+and fundamental data:
 
 ```bash
-python Run_complete_program.py --update-price-data --update-finance-data
+python Run_complete_program.py
 ```
 
-After this initial download you can run the script without the update flags and
-use `--skip-Gemini` or `--skip-GPT` as needed.
+After this initial download you may skip the update steps by supplying the
+`--skip-update-price-data` and `--skip-update-finance-data` options. Use
+`--skip-Gemini-pipeline` or `--skip-GPT-pipeline` to disable either pipeline
+when not needed.
 
 ### Working Directory
 
