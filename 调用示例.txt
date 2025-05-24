@@ -1,9 +1,8 @@
 ##### 跳过数据库的更新，直接计算指标数据，以及最后排名
-python3 /Users/liuxiaodong/Nutstore\ Files/AIinvest/频道--AI量化对决/AI_stock_analysis\ _Optimization/Run_complete_program.py
-
+python3 /Users/liuxiaodong/Nutstore\ Files/AIinvest/频道--AI量化对决/AI_stock_analysis\ _Optimization/Run_complete_program.py --skip-update-price-data --skip-update-finance-data
 
 ### 全部流程
-python3 /Users/liuxiaodong/Nutstore\ Files/AIinvest/频道--AI量化对决/AI_stock_analysis\ _Optimization/Run_complete_program.py --update-price-data --update-finance-data
+python3 /Users/liuxiaodong/Nutstore\ Files/AIinvest/频道--AI量化对决/AI_stock_analysis\ _Optimization/Run_complete_program.py
 
 ### 跳过财报更新，只更新股价数据
-python3 /Users/liuxiaodong/Nutstore\ Files/AIinvest/频道--AI量化对决/AI_stock_analysis\ _Optimization/Run_complete_program.py --update-price-data
+python3 /Users/liuxiaodong/Nutstore\ Files/AIinvest/频道--AI量化对决/AI_stock_analysis\ _Optimization/Run_complete_program.py --skip-update-finance-data
