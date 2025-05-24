@@ -8,29 +8,18 @@
 3. 调用 GPT/run_complete_process.py 中的 run_pipeline 函数 (如果需要)。
 4. 允许用户选择性地跳过数据更新或筛选步骤。
 
+命令行参数说明:
+--skip-update-price-data   跳过 yahoo_downloader.download_price_data()
+--skip-update-finance-data 跳过 yahoo_downloader.acquire_raw_financial_data_to_staging()
+--skip-Gemini-pipeline     跳过 Gemini 处理流程
+--skip-GPT-pipeline        跳过 GPT 处理流程
+
 命令行用法示例:
-# --- Gemini 流程 ---
-- 运行完整 Gemini 流程:
-  python Run_complete_program.py
-
-- 跳过 Gemini 最终筛选:
-  python Run_complete_program.py --skip-Gemini-screening
-- 完全跳过 Gemini 流程:
-  python Run_complete_program.py --skip-Gemini
-
-# --- GPT 流程 ---
-- 运行完整 GPT 流程 (默认执行):
-  python Run_complete_program.py
-- 跳过 GPT 流程:
-  python Run_complete_program.py --skip-GPT
-
-# --- 数据下载 ---
-- 更新股价和财务数据后再运行:
-  python Run_complete_program.py --update-price-data --update-finance-data
-- 仅更新股价数据:
-  python Run_complete_program.py --update-price-data
-# --- 同时运行 (示例: 跳过 Gemini) ---
-  python Run_complete_program.py --skip-Gemini
+  python Run_complete_program.py                       # 默认运行全部流程
+  python Run_complete_program.py --skip-Gemini-pipeline
+  python Run_complete_program.py --skip-GPT-pipeline
+  python Run_complete_program.py --skip-update-price-data
+  python Run_complete_program.py --skip-update-finance-data
 """
 
 import argparse
