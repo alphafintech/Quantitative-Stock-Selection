@@ -127,65 +127,49 @@ def run_main_process():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Gemini 控制参数
+    # 数据更新控制参数（默认为执行，使用 --skip-* 跳过）
     parser.add_argument(
-        '--update-price-data',
+        '--skip-update-price-data',
         action='store_true',
-        help='在运行管道前下载/更新股价数据'
+        help='跳过从雅虎下载股价数据'
     )
     parser.add_argument(
-        '--update-finance-data',
+        '--skip-update-finance-data',
         action='store_true',
-        help='在运行管道前下载/更新财务数据'
-    )
-    # Gemini 控制参数
-    gemini_group = parser.add_argument_group('Gemini Pipeline Control (默认执行, 除非 --skip-Gemini)')
-    gemini_group.add_argument(
-        '--skip-Gemini-screening',
-        action='store_true',
-        help="跳过 Gemini 流程的最终筛选步骤。"
-    )
-    gemini_group.add_argument(
-        '--skip-Gemini',
-        action='store_true',
-        help="完全跳过 Gemini 流程的执行。"
+        help='跳过从雅虎下载财务数据'
     )
 
-    # GPT 控制参数
-    gpt_group = parser.add_argument_group('GPT Pipeline Control')
-    gpt_group.add_argument(
-        '--skip-GPT',
+    # Gemini/GPT 流程控制参数
+    parser.add_argument(
+        '--skip-Gemini-pipeline',
         action='store_true',
-        help="完全跳过 GPT 流程（默认执行）。"
+        help='跳过 Gemini 流程'
+    )
+    parser.add_argument(
+        '--skip-GPT-pipeline',
+        action='store_true',
+        help='跳过 GPT 流程'
     )
 
 
     args = parser.parse_args()
-    if args.update_price_data:
+
+    if not args.skip_update_price_data:
         logging.info("--- 下载/更新股价数据 ---")
         yahoo_downloader.download_price_data()
 
-    if args.update_finance_data:
+    if not args.skip_update_finance_data:
         logging.info("--- 下载/更新财务数据 ---")
-        yahoo_downloader.download_financial_data()
+        yahoo_downloader.acquire_raw_financial_data_to_staging()
 
 
     # --- 执行 Gemini 流程 (如果可用且未被跳过) ---
-    if GEMINI_AVAILABLE and not args.skip_Gemini:
-        
-        run_gemini_screening = not args.skip_Gemini_screening
-
+    if GEMINI_AVAILABLE and not args.skip_Gemini_pipeline:
         logging.info("--- 开始执行主流程 (Gemini) ---")
-        logging.info(
-            f"Gemini 参数: run_final_screening={run_gemini_screening}"
-        )
-
         start_time_gemini = time.time()
         try:
             change_working_directory(Gemini_dir)
-            gemini_main_pipeline(
-                run_final_screening=run_gemini_screening
-            )
+            gemini_main_pipeline(True)
             logging.info("--- 主流程 (Gemini) 执行完毕 ---")
         except TypeError as te:
             logging.error(f"调用 gemini_main_pipeline 时发生 TypeError: {te}", exc_info=True)
@@ -195,14 +179,14 @@ def run_main_process():
             end_time_gemini = time.time()
             duration_gemini = end_time_gemini - start_time_gemini
             logging.info(f"--- Gemini 流程执行时间: {duration_gemini:.2f} 秒 ---")
-    elif args.skip_Gemini:
-         logging.info("--- 跳过 Gemini 流程 (根据 --skip-Gemini 参数) ---")
+    elif args.skip_Gemini_pipeline:
+         logging.info("--- 跳过 Gemini 流程 (根据 --skip-Gemini-pipeline 参数) ---")
     elif not GEMINI_AVAILABLE:
          logging.warning("--- Gemini 流程不可用 (导入失败) ---")
 
 
     # --- 执行 GPT 流程 (如果可用且未被跳过) ---
-    if GPT_AVAILABLE and not args.skip_GPT:
+    if GPT_AVAILABLE and not args.skip_GPT_pipeline:
         recalc_scores_gpt = True  # 固定为 True
         do_selection_gpt = True  # 固定为 True
 
@@ -214,6 +198,7 @@ def run_main_process():
         try:
             change_working_directory(GPT_dir)
             gpt_run_pipeline(
+                trend_run_stage=0,
                 recalc_scores=recalc_scores_gpt,
                 do_selection=do_selection_gpt
             )
@@ -228,7 +213,7 @@ def run_main_process():
             duration_gpt = end_time_gpt - start_time_gpt
             logging.info(f"--- GPT 流程执行时间: {duration_gpt:.2f} 秒 ---")
             change_working_directory()
-    elif args.skip_GPT and not GPT_AVAILABLE:
+    elif args.skip_GPT_pipeline and not GPT_AVAILABLE:
          logging.warning("--- GPT 流程不可用 (导入失败)，但已跳过 GPT ---")
     elif not GPT_AVAILABLE:
          logging.warning("--- GPT 流程不可用 (导入失败) ---")
@@ -573,8 +558,7 @@ def test_main_process():
 # --- 主执行逻辑 ---
 if __name__ == "__main__":
     overall_start_time = time.time()
-    #run_main_process() # 调用封装好的主流程函数
-    test_main_process() # 调用测试函数
+    run_main_process()  # 调用封装好的主流程函数
     generate_prompt_Gemini()
     generate_prompt_GPT()
     overall_end_time = time.time()
