@@ -788,28 +788,56 @@ def calc_scores(df: pd.DataFrame) -> pd.DataFrame:
         qs  = df2.get(qs_col, 0)
         df2[f"c_{key}_score"] = (FY_W*fy + QSEQ_W*qs) / _COMBO_DENOM
 
-    # 5) Growth 维度使用加权平均（避免一票否决）
-    G_W = {"rev":0.5, "eps":0.3, "fcf":0.1, "margin":0.1}
-    df2["growth_score"] = (
-        G_W["rev"]    * df2["c_rev_score"] +
-        G_W["eps"]    * df2["c_eps_score"] +
-        G_W["fcf"]    * df2["c_fcf_score"] +
-        G_W["margin"] * df2["c_margin_score"]
+    # 5) Growth 维度 —— 权重自适应剔除 NaN
+    G_W = np.array([0.5, 0.3, 0.1, 0.1])            # rev, eps, fcf, margin
+    G_COLS = ["c_rev_score", "c_eps_score", "c_fcf_score", "c_margin_score"]
+
+    score_mat = df2[G_COLS].to_numpy(dtype=float)
+    weight_mat = np.tile(G_W, (len(df2), 1))
+
+    nan_mask = np.isnan(score_mat)
+    weight_mat[nan_mask] = 0.0                      # 缺失项权重→0
+    score_mat = np.nan_to_num(score_mat, copy=False)
+
+    weight_sum = weight_mat.sum(axis=1)
+    # 全部缺失时 weight_sum==0 → growth_score 设为 NaN
+    growth_scores = np.where(
+        weight_sum > 0,
+        (weight_mat * score_mat).sum(axis=1) / weight_sum,
+        np.nan
     )
+    df2["growth_score"] = growth_scores
 
     # 6) 其余维度：质量 / 效率 / 安全 / 估值
     for dim in ["quality", "efficiency", "safety", "valuation"]:
         score_cols = [f"{c}_score" for c in DIM_MAP[dim]]
         df2[f"{dim}_score"] = df2[score_cols].mean(axis=1)
 
-    # 7) Total Score 计算保持原来权重
-    df2["total_score"] = (
-        WEIGHTS["growth"]     * df2["growth_score"]     +
-        WEIGHTS["quality"]    * df2["quality_score"]    +
-        WEIGHTS["efficiency"] * df2["efficiency_score"] +
-        WEIGHTS["safety"]     * df2["safety_score"]     +
-        WEIGHTS["valuation"]  * df2["valuation_score"]
+    # 7) Total Score —— 权重自适应，剔除 NaN 维度
+    DIM_COLS   = ["growth_score", "quality_score", "efficiency_score",
+                  "safety_score", "valuation_score"]
+    DIM_W      = np.array([
+        WEIGHTS["growth"],
+        WEIGHTS["quality"],
+        WEIGHTS["efficiency"],
+        WEIGHTS["safety"],
+        WEIGHTS["valuation"],
+    ], dtype=float)
+
+    dim_mat    = df2[DIM_COLS].to_numpy(dtype=float)
+    weight_mat = np.tile(DIM_W, (len(df2), 1))
+
+    nan_mask   = np.isnan(dim_mat)
+    weight_mat[nan_mask] = 0.0
+    dim_mat    = np.nan_to_num(dim_mat, copy=False)
+
+    w_sum      = weight_mat.sum(axis=1)
+    total_scores = np.where(
+        w_sum > 0,
+        (weight_mat * dim_mat).sum(axis=1) / w_sum,
+        np.nan
     )
+    df2["total_score"] = total_scores
 
     # 写回数据库
     df2.to_sql(SCORES_TABLE, sqlite3.connect(DB_PATH),
