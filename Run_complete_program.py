@@ -263,6 +263,7 @@ def _build_holdings_string(excel_path: Path, price_db: Path | None = None) -> st
         logging.error(f"[Holdings] {ke}")
         return "N/A"
 
+    df_full = df.copy()  # keep for cash extraction
     df = df[[col_tic, col_cost, col_share]].dropna()
     if df.empty:
         logging.warning(f"[Holdings] No valid rows in {excel_path.name}")
@@ -358,6 +359,25 @@ def _build_holdings_string(excel_path: Path, price_db: Path | None = None) -> st
         cost_str  = f"${cost:,.2f}"
         price_str = f"${price:,.2f}" if price is not None else "NA"
         parts.append(f"({tic}:{cost_str}, {share}, {price_str})")
+
+    # ------------------------------------------------------------------
+    # Append Cash row if present (strict 'TOTAL VALUE' column, case-insensitive, and Ticker exactly 'cash')
+    # ------------------------------------------------------------------
+    try:
+        # Strict column name 'TOTAL VALUE' (case insensitive match)
+        col_total_val = next(
+            c for c in df_full.columns
+            if c.strip().lower().replace(" ", "") == "totalvalue"
+        )
+        cash_rows = df_full[df_full[col_tic].astype(str).str.strip().str.lower() == "cash"]
+        if not cash_rows.empty:
+            cash_val = float(cash_rows.iloc[0][col_total_val])
+            cash_str = f"${cash_val:,.0f}"
+            parts.append(f"(Cash: {cash_str})")
+    except StopIteration:
+        logging.debug("[Holdings-DEBUG] 'TOTAL VALUE' column not found; cash not appended")
+    except Exception as e_cash:
+        logging.debug(f"[Holdings-DEBUG] Cash row not appended: {e_cash}")
 
     return ", ".join(parts)
 
