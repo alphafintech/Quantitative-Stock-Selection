@@ -1045,6 +1045,8 @@ def export_trend_excel(df: pd.DataFrame, out_path: str | None = None):
     else:                  # ③ 默认
         out_file = Path("trend_scores.xlsx")
 
+    out_file.parent.mkdir(parents=True, exist_ok=True)   # 确保目录存在
+
     # -- 导出 --
     try:
         df.sort_values("TotalScore", ascending=False).to_excel(out_file, index=False)
