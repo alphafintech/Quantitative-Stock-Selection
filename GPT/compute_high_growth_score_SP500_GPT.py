@@ -50,48 +50,153 @@ def _get_finance_db(cfg_path: str = "config.ini") -> str:
     return str(db_path)
 
 
+import json
+
+# ----------------------------------------------------------------------
+# Helper : load JSON → DataFrame from staging tables (works with new format)
+# ----------------------------------------------------------------------
+def _load_json_df(cur: sqlite3.Cursor, ticker: str, table: str) -> pd.DataFrame:
+    cur.execute(f"SELECT data_json FROM {table} WHERE ticker=?", (ticker,))
+    row = cur.fetchone()
+    if not row or row[0] in (None, ""):
+        return pd.DataFrame()
+    try:
+        df = pd.read_json(row[0], orient="split")
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index, errors="coerce")
+        return df.sort_index()
+    except (ValueError, TypeError):
+        return pd.DataFrame()
+
+# ----------------------------------------------------------------------
+# Internal util: write one ticker's data into raw_financials
+# ----------------------------------------------------------------------
+def _save_financial_data_for_ticker(conn: sqlite3.Connection,
+                                    ticker: str,
+                                    batches: list[tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]],
+                                    price: float,
+                                    forward_eps: float) -> None:
+    """
+    Insert quarterly/annual financial statements for *ticker* into the
+    raw_financials table inside *conn*.
+
+    *batches* = [("Q"|"A", income_df, balance_df, cashflow_df), ...]
+    All DataFrames have DatetimeIndex (report period end).
+    """
+    for period, inc, bal, cf in batches:
+        # Normalise indices
+        inc.index = pd.to_datetime(inc.index)
+        bal.index = pd.to_datetime(bal.index)
+        cf.index  = pd.to_datetime(cf.index)
+
+        # union index to ensure alignment
+        idx = inc.index.union(bal.index).union(cf.index)
+        inc = inc.reindex(idx)
+        bal = bal.reindex(idx)
+        cf  = cf.reindex(idx)
+
+        if inc.empty:
+            continue
+
+        # Helper for field extraction (reuse existing first_available & _norm defined below)
+        def grab(df: pd.DataFrame, keys: list[str], default=np.nan):
+            return first_available(df, keys, default=default, idx=idx)
+
+        out = pd.DataFrame({
+            "ticker": ticker,
+            "report_date": idx,
+            "total_revenue": grab(inc, ["Total Revenue", "Revenue"]),
+            "eps": grab(inc, ["Diluted EPS", "EPS"]),
+            "gross_profit": grab(inc, ["Gross Profit"]),
+            "operating_income": grab(inc, ["Operating Income"]),
+            "net_income": grab(inc, ["Net Income"]),
+            "research_development": grab(inc, ["Research and development", "R&D"]),
+            "interest_expense": grab(inc, ["Interest Expense"]),
+            "ebitda": grab(inc, ["EBITDA"]),
+            # balance sheet
+            "total_assets": grab(bal, ["Total Assets"]),
+            "total_current_assets": grab(bal, ["Total Current Assets"]),
+            "total_current_liabilities": grab(bal, ["Total Current Liabilities"]),
+            "cash_and_eq": grab(bal, ["Cash And Cash Equivalents"]),
+            "minority_interest": grab(bal, ["Minority Interest"], default=0.0),
+            "total_debt": (grab(bal, ["Long Term Debt"], default=0.0) +
+                           grab(bal, ["Short Long Term Debt"], default=0.0)),
+            "shares_outstanding": grab(bal, ["Ordinary Shares Number", "Share Issued"]),
+            "total_liabilities": grab(bal, ["Total Liab", "Total Liabilities"]),
+            # cash‑flow
+            "operating_cash_flow": grab(cf, ["Operating Cash Flow"]),
+            "capital_expenditures": grab(cf, ["Capital Expenditures", "CapEx"]),
+            # valuation snapshots (same for every row in this batch)
+            "price": price,
+            "forward_eps": forward_eps,
+        })
+
+        out["period"] = period
+        out["free_cash_flow"] = (
+            pd.to_numeric(out["operating_cash_flow"], errors="coerce").fillna(0.0) +
+            pd.to_numeric(out["capital_expenditures"], errors="coerce").fillna(0.0)
+        )
+
+        # Ensure column order & types
+        out = out.reindex(columns=RAW_COLS)
+        numeric_cols = [c for c in out.columns if c not in ("ticker", "report_date", "period")]
+        out[numeric_cols] = out[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        out["report_date"] = pd.to_datetime(out["report_date"]).dt.strftime("%Y-%m-%d")
+
+        out.to_sql(RAW_TABLE, conn, if_exists="append", index=False)
+
+
 def _process_staged_to_raw_db(stage_db: Path, out_db: Path) -> None:
-    """Convert JSON staging data to the ``raw_financials`` table format."""
-    from Gemini.finance_db_migrate import (
-        _get_sp500_tickers_from_source,
-        _load_staged_json_to_df,
-    )
-    from yahoo_downloader import _ensure_fin_schema, _save_financial_data_for_ticker
-    import json
+    """
+    Convert the JSON blobs produced by `acquire_raw_financial_data_to_staging`
+    into the **raw_financials** table used by compute_metrics().
 
-    with sqlite3.connect(out_db) as final_conn, sqlite3.connect(stage_db) as stg_conn:
-        _ensure_fin_schema(final_conn)
-        stg_cur = stg_conn.cursor()
-        tickers = _get_sp500_tickers_from_source(stg_conn)
-        for tk in tqdm(tickers, desc="Adapt", leave=False):
-            q_inc = _load_staged_json_to_df(stg_cur, tk, "stg_quarterly_income")
-            q_bal = _load_staged_json_to_df(stg_cur, tk, "stg_quarterly_balance")
-            q_cf  = _load_staged_json_to_df(stg_cur, tk, "stg_quarterly_cashflow")
-            a_inc = _load_staged_json_to_df(stg_cur, tk, "stg_annual_income")
-            a_bal = _load_staged_json_to_df(stg_cur, tk, "stg_annual_balance")
-            a_cf  = _load_staged_json_to_df(stg_cur, tk, "stg_annual_cashflow")
+    raw_financials schema is defined by RAW_COLS list at top of this script.
+    """
+    # Ensure destination directory
+    out_db.parent.mkdir(parents=True, exist_ok=True)
 
-            stg_cur.execute("SELECT data_json FROM stg_price_summary WHERE ticker=?", (tk,))
-            row = stg_cur.fetchone()
-            price = None
-            if row and row[0]:
-                try:
-                    d = json.loads(row[0])
-                    if isinstance(d, dict):
-                        price = d.get("regularMarketPrice") or d.get("regularMarketPreviousClose")
-                except Exception:
-                    price = None
+    with sqlite3.connect(stage_db) as stg_conn, sqlite3.connect(out_db) as fin_conn:
+        cur = stg_conn.cursor()
 
-            stg_cur.execute("SELECT data_json FROM stg_key_stats WHERE ticker=?", (tk,))
-            row = stg_cur.fetchone()
-            fwd_eps = None
-            if row and row[0]:
-                try:
-                    d = json.loads(row[0])
-                    if isinstance(d, dict):
-                        fwd_eps = d.get("forwardEps") or d.get("forwardEPS")
-                except Exception:
-                    fwd_eps = None
+        # Drop & recreate raw table
+        fin_conn.execute(f"DROP TABLE IF EXISTS {RAW_TABLE}")
+        col_defs = ", ".join(
+            [f"{c} REAL" if c not in ("ticker", "report_date", "period") else f"{c} TEXT"
+             for c in RAW_COLS]
+        )
+        fin_conn.execute(
+            f"CREATE TABLE {RAW_TABLE} ({col_defs})"
+        )
+
+        # Fetch tickers from any one staging table
+        tickers = [
+            r[0] for r in cur.execute("SELECT DISTINCT ticker FROM stg_quarterly_income")
+        ]
+
+        for tk in tqdm(tickers, desc="Build‑GPT‑DB", leave=False):
+            # Load quarterly / annual statements
+            q_inc = _load_json_df(cur, tk, "stg_quarterly_income")
+            q_bal = _load_json_df(cur, tk, "stg_quarterly_balance")
+            q_cf  = _load_json_df(cur, tk, "stg_quarterly_cashflow")
+            a_inc = _load_json_df(cur, tk, "stg_annual_income")
+            a_bal = _load_json_df(cur, tk, "stg_annual_balance")
+            a_cf  = _load_json_df(cur, tk, "stg_annual_cashflow")
+
+            # price & forward_eps saved as scalar JSON (or float string)
+            def _load_scalar(table: str):
+                cur.execute(f"SELECT data_json FROM {table} WHERE ticker=?", (tk,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    try:
+                        val = json.loads(row[0])
+                        return float(val)
+                    except Exception:
+                        pass
+                return np.nan
+
+            price_val = _load_scalar("stg_price_summary")
+            fwd_eps_val = _load_scalar("stg_key_stats")
 
             batches = []
             if not q_inc.empty:
@@ -99,37 +204,50 @@ def _process_staged_to_raw_db(stage_db: Path, out_db: Path) -> None:
             if not a_inc.empty:
                 batches.append(("A", a_inc, a_bal, a_cf))
 
-            _save_financial_data_for_ticker(final_conn, tk, batches, price, fwd_eps)
+            if not batches:
+                continue  # nothing to save
+
+            _save_financial_data_for_ticker(fin_conn, tk, batches, price_val, fwd_eps_val)
+
+        fin_conn.commit()
 
 
+# ----------------------------------------------------------------------
+# Public function called by main workflow
+# ----------------------------------------------------------------------
 def _prepare_gpt_finance_db(cfg_path: str = "config.ini") -> str:
-    """Process raw financial data from the staging DB into GPT's finance DB."""
-
+    """
+    Read the staging DB produced by `acquire_raw_financial_data_to_staging`,
+    convert it to GPT's finance DB format (raw_financials), and return the path.
+    """
     cfg_file = Path(cfg_path)
-    if not cfg_file.exists():
-        alt = Path(__file__).resolve().parent.parent / cfg_path
-        if alt.exists():
-            cfg_file = alt
+    if not cfg_file.is_absolute():
+        cfg_file = (Path(__file__).resolve().parent.parent / cfg_file).resolve()
+
     cfg = configparser.ConfigParser()
-    if cfg_file.exists():
-        cfg.read(cfg_file)
+    cfg.read(cfg_file)
 
-    stage_val = cfg.get("database", "raw_stage_db", fallback="SP500_raw_finance.db")
-    final_val = cfg.get("database", "GPT_finance_db", fallback="GPT/SP500_finance_data_GPT.db")
+    stage_val = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
+    gpt_val   = cfg.get("database", "GPT_finance_db", fallback="GPT/SP500_finance_data_GPT.db")
 
-    stage_path = Path(stage_val)
-    if not stage_path.is_absolute():
-        stage_path = Path(__file__).resolve().parent.parent / stage_val
+    stage_db = Path(stage_val)
+    if not stage_db.is_absolute():
+        stage_db = (cfg_file.parent / stage_db).resolve()
 
-    final_path = Path(final_val)
-    if not final_path.is_absolute():
-        final_path = Path(__file__).resolve().parent.parent / final_val
+    gpt_db = Path(gpt_val)
+    if not gpt_db.is_absolute():
+        gpt_db = (cfg_file.parent / gpt_db).resolve()
 
-    final_path.parent.mkdir(parents=True, exist_ok=True)
+    # Rebuild if GPT DB missing or older than staging DB
+    rebuild = (not gpt_db.exists()) or stage_db.stat().st_mtime > gpt_db.stat().st_mtime
+    if rebuild:
+        logging.info("[GPT‑DB] Rebuilding GPT finance DB from staging …")
+        _process_staged_to_raw_db(stage_db, gpt_db)
+        logging.info("[GPT‑DB] Build complete → %s", gpt_db)
+    else:
+        logging.info("[GPT‑DB] Using existing GPT finance DB → %s", gpt_db)
 
-    _process_staged_to_raw_db(stage_path, final_path)
-
-    return str(final_path)
+    return str(gpt_db)
 
 
 # ══════════════════ CONFIG ═══════════════════════════════════

@@ -250,7 +250,89 @@ def _ensure_fin_schema(conn: sqlite3.Connection) -> None:
             logger.warning(f"Table '{RAW_TABLE}' exists but schema might mismatch. Expected: {RAW_COLS}, Found: {existing_cols}")
         else:
             logger.info(f"Table '{RAW_TABLE}' schema seems to be in place.")
+# =============================================================================
+# New helper – use yfinance to fetch raw statements
+# =============================================================================
+def _fetch_fin_statements_yf(ticker: str) -> Dict[str, Any]:
+    """
+    Fetch quarterly/annual income, balance-sheet, cash-flow plus last price & forward EPS
+    using yfinance (same approach as download_profits.py/get_financial_data).
 
+    返回：
+        {
+            "q_incs": pd.DataFrame, "a_incs": pd.DataFrame,
+            "q_bals": pd.DataFrame, "a_bals": pd.DataFrame,
+            "q_cfs": pd.DataFrame, "a_cfs": pd.DataFrame,
+            "price": float | np.nan,
+            "forward_eps": float | np.nan
+        }
+    DataFrame 的索引已统一为 DatetimeIndex（report period 末日），列名保持原始。
+    """
+    try:
+        ytk = yf.Ticker(ticker)
+
+        # ------------------------------------------------------------------
+        # Robustly grab DataFrames regardless of yfinance version
+        # ------------------------------------------------------------------
+        def _grab(names: list[str]) -> pd.DataFrame:
+            """
+            Iterate over a list of attribute names and return the first
+            DataFrame found; otherwise return an empty DataFrame.
+            """
+            for attr in names:
+                df = getattr(ytk, attr, None)
+                if isinstance(df, pd.DataFrame):
+                    return df.copy()
+            return pd.DataFrame()
+
+        # Annual / quarterly statements
+        a_inc = _grab(["income_stmt", "financials"])
+        q_inc = _grab(["quarterly_income_stmt", "quarterly_financials"])
+        a_bal = _grab(["balance_sheet"])
+        q_bal = _grab(["quarterly_balance_sheet"])
+        a_cf  = _grab(["cashflow"])
+        q_cf  = _grab(["quarterly_cashflow"])
+
+        # ------------------------------------------------------------------
+        # Normalise DataFrames: transpose, ensure DatetimeIndex, sort
+        # ------------------------------------------------------------------
+        def _norm_df(df: pd.DataFrame) -> pd.DataFrame:
+            if df is None or df.empty:
+                return pd.DataFrame()
+            if not isinstance(df.columns, pd.DatetimeIndex):
+                df.columns = pd.to_datetime(df.columns, errors="coerce")
+            df = df.T
+            df.index = pd.to_datetime(df.index, errors="coerce")
+            return df.sort_index()
+
+        # Try to obtain last price & forward EPS safely
+        price_val = np.nan
+        try:
+            fast_info = getattr(ytk, "fast_info", {})
+            if isinstance(fast_info, dict):
+                price_val = fast_info.get("last_price", np.nan)
+        except Exception:
+            pass
+
+        forward_eps_val = np.nan
+        if hasattr(ytk, "info") and isinstance(ytk.info, dict):
+            forward_eps_val = ytk.info.get("forwardEps", np.nan)
+
+        out = {
+            "q_incs": _norm_df(q_inc),
+            "a_incs": _norm_df(a_inc),
+            "q_bals": _norm_df(q_bal),
+            "a_bals": _norm_df(a_bal),
+            "q_cfs":  _norm_df(q_cf),
+            "a_cfs":  _norm_df(a_cf),
+            "price": price_val,
+            "forward_eps": forward_eps_val,
+        }
+        return out
+    except Exception as e:
+        logger.error("yfinance fetch failed for %s: %s", ticker, e)
+        return {}
+    
 def _norm(label: str) -> str:
     return "".join(ch for ch in label.lower() if ch.isalnum())
 
@@ -439,6 +521,10 @@ def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: st
             logger.error(f"Error serializing dict to JSON for {ticker}, table {table_name}: {e_json}")
     elif isinstance(data_to_save, str): # Likely an error message from yahooquery
         logger.warning(f"yahooquery returned error for {ticker}, data intended for {table_name}: {data_to_save}")
+    elif isinstance(data_to_save, (int, float, np.floating)):
+        # Skip NaN values
+        if not (isinstance(data_to_save, float) and np.isnan(data_to_save)):
+            json_data_str = json.dumps(data_to_save)
     elif data_to_save is not None: 
         logger.warning(f"Unexpected data type for {ticker}, table {table_name}: {type(data_to_save)}. Cannot serialize.")
 
@@ -473,6 +559,10 @@ def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: st
             logger.error(f"Error serializing dict to JSON for {ticker}, table {table_name}: {e_json}")
     elif isinstance(data_to_save, str): # Likely an error message from yahooquery
         logger.warning(f"yahooquery returned error for {ticker}, data intended for {table_name}: {data_to_save}")
+    elif isinstance(data_to_save, (int, float, np.floating)):
+        # Skip NaN values
+        if not (isinstance(data_to_save, float) and np.isnan(data_to_save)):
+            json_data_str = json.dumps(data_to_save)
     elif data_to_save is not None: 
         logger.warning(f"Unexpected data type for {ticker}, table {table_name}: {type(data_to_save)}. Cannot serialize.")
 
@@ -486,193 +576,68 @@ def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: st
             logger.error(f"Error saving to staging DB for {ticker}, {table_name}: {e_sql}")
 
 
-# --- Phase 1: Data Acquisition ---
+# -----------------------------------------------------------------------------
+# Phase 1 – Data Acquisition  (re-implemented, yfinance version)
+# -----------------------------------------------------------------------------
 def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bool:
     """
-    Acquires raw financial data using yahooquery and saves it to a staging database.
-    Returns True if successful, False otherwise.
+    使用 yfinance 获取财报数据并保存到原有 Staging DB。
+    保存逻辑、路径、表名与旧实现完全一致；唯一变化是 → 数据来源。
     """
-    logger.info("--- Starting Phase 1: Data Acquisition and Saving to Staging DB ---")
+    logger.info("--- Phase 1 (yfinance): 开始获取并写入 Staging DB ---")
     cfg = _load_cfg(config_file)
-    raw_stage_db_path_str = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
-    Path(raw_stage_db_path_str).parent.mkdir(parents=True, exist_ok=True)
-    
+    raw_stage_db_path = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
+    Path(raw_stage_db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # 1) 读取 S&P500 列表
     try:
         tickers = _get_sp500_tickers()
         if not tickers:
-            logger.error("No tickers found. Aborting financial data acquisition.")
+            logger.error("未获取到 S&P500 列表，终止。")
             return False
-        logger.info(f"Found {len(tickers)} S&P 500 tickers for acquisition.")
     except Exception as e:
-        logger.error(f"Failed to get S&P 500 tickers: {e}")
+        logger.error("读取 S&P500 列表失败: %s", e)
         return False
 
+    # 2) 确保 staging 表存在
     stage_table_map = {
         "q_incs": "stg_quarterly_income", "q_bals": "stg_quarterly_balance", "q_cfs": "stg_quarterly_cashflow",
         "a_incs": "stg_annual_income",   "a_bals": "stg_annual_balance",   "a_cfs": "stg_annual_cashflow",
-        "price": "stg_price_summary",    "key_stats": "stg_key_stats"
+        "price": "stg_price_summary",    "forward_eps": "stg_key_stats"
     }
-
     try:
-        with sqlite3.connect(raw_stage_db_path_str) as stage_conn:
-            for table_name in stage_table_map.values():
-                _ensure_raw_stage_table_exists(stage_conn, table_name)
+        with sqlite3.connect(raw_stage_db_path) as conn:
+            for tbl in stage_table_map.values():
+                _ensure_raw_stage_table_exists(conn, tbl)
     except Exception as e:
-        logger.error(f"Failed to initialize staging database or tables: {e}")
+        logger.error("初始化 staging DB 失败: %s", e)
         return False
 
-    chunk_size = 50 
-    all_chunks_successful = True
-    for i in range(0, len(tickers), chunk_size):
-        ticker_chunk = tickers[i:i + chunk_size]
-        logger.info(f"Acquiring data for ticker chunk {i//chunk_size + 1}/{(len(tickers) + chunk_size - 1)//chunk_size} ({len(ticker_chunk)} tickers).")
-        
+    # 3) 下载并保存（支持并发，可按需拆批）
+    success = True
+    for idx, tk in enumerate(tickers, 1):
+        logger.info("(%d/%d) 下载 %s 财报…", idx, len(tickers), tk)
+        fin_data = _fetch_fin_statements_yf(tk)
+        if not fin_data:
+            logger.warning("跳过 %s – 无数据", tk)
+            success = False
+            continue
+
+        # 写入 DB：沿用旧的工具函数
         try:
-            yq_batch_tickers = YQTicker(
-                ticker_chunk, asynchronous=True, validate=False, 
-                progress=True, timeout=60, max_workers=16 
-            )
+            with sqlite3.connect(raw_stage_db_path) as conn:
+                for key, value in fin_data.items():
+                    tbl = stage_table_map[key]
+                    _save_single_ticker_data_to_stage(conn, tk, tbl, value)
+                conn.commit()
+        except Exception as e:
+            logger.error("写入 %s 财报到 staging 失败: %s", tk, e, exc_info=True)
+            success = False
 
-            chunk_data_results = { 
-                "q_incs": yq_batch_tickers.income_statement(frequency='q'),
-                "q_bals": yq_batch_tickers.balance_sheet(frequency='q'),
-                "q_cfs": yq_batch_tickers.cash_flow(frequency='q'),
-                "a_incs": yq_batch_tickers.income_statement(frequency='a'),
-                "a_bals": yq_batch_tickers.balance_sheet(frequency='a'),
-                "a_cfs": yq_batch_tickers.cash_flow(frequency='a'),
-                "price": yq_batch_tickers.price,
-                "key_stats": yq_batch_tickers.key_stats
-            }
-            logger.info(f"Finished fetching data for chunk {i//chunk_size + 1} from yahooquery.")
+        time.sleep(0.2)  # 轻微节流防封
 
-            with sqlite3.connect(raw_stage_db_path_str) as stage_conn_chunk_save:
-                for data_key, yq_batch_result_for_datakey in chunk_data_results.items():
-                    stage_table_name = stage_table_map[data_key]
-                    for tk_in_chunk in ticker_chunk:
-                        data_for_single_ticker = None 
-
-                        if isinstance(yq_batch_result_for_datakey, dict):
-                            data_for_single_ticker = yq_batch_result_for_datakey.get(tk_in_chunk)
-                        elif isinstance(yq_batch_result_for_datakey, pd.DataFrame):
-                            df_chunk_data = yq_batch_result_for_datakey
-                            # Case 1: MultiIndex with 'symbol' level
-                            if isinstance(df_chunk_data.index, pd.MultiIndex) and 'symbol' in df_chunk_data.index.names:
-                                logger.debug(f"DataFrame for {data_key} is MultiIndex. Attempting .xs for ticker '{tk_in_chunk}'. Index names: {df_chunk_data.index.names}")
-                                try:
-                                    if tk_in_chunk in df_chunk_data.index.get_level_values('symbol'):
-                                        data_for_single_ticker = df_chunk_data.xs(tk_in_chunk, level='symbol')
-                                    else:
-                                        logger.debug(f"Ticker {tk_in_chunk} not in 'symbol' level values for {data_key} (MultiIndex case).")
-                                except TypeError as te: 
-                                    logger.error(
-                                        f"TypeError during .xs for {tk_in_chunk} on {data_key} (expected MultiIndex): {te}. "
-                                        f"Index details: type={type(df_chunk_data.index)}, names={df_chunk_data.index.names}, is_multi={isinstance(df_chunk_data.index, pd.MultiIndex)}"
-                                    )
-                                except KeyError: 
-                                    logger.debug(f"KeyError (ticker not found) during .xs for '{tk_in_chunk}' in {data_key} (MultiIndex case).")
-                                except Exception as e_xs: 
-                                    logger.error(f"Unexpected error during .xs for {tk_in_chunk} on {data_key}: {e_xs}")
-
-                            # Case 2: Simple 'symbol' index (DataFrame where each row is a ticker)
-                            elif df_chunk_data.index.name == 'symbol' and \
-                                 isinstance(df_chunk_data.index, pd.Index) and \
-                                 not isinstance(df_chunk_data.index, pd.MultiIndex) and \
-                                 len(ticker_chunk) > 1 :
-                                logger.debug(f"DataFrame for {data_key} has 'symbol' as simple Index for multi-ticker chunk. Attempting to extract/reconstruct for '{tk_in_chunk}'.")
-                                if tk_in_chunk in df_chunk_data.index:
-                                    extracted_data_for_ticker_row = df_chunk_data.loc[tk_in_chunk] 
-                                    
-                                    if isinstance(extracted_data_for_ticker_row, pd.DataFrame) :
-                                        df_to_check = extracted_data_for_ticker_row.copy() # Work with a copy
-                                        if isinstance(df_to_check.index, pd.DatetimeIndex):
-                                            data_for_single_ticker = df_to_check
-                                            logger.debug(f"Directly using DataFrame for {tk_in_chunk}, {data_key} from 'symbol' indexed data (DatetimeIndex ok). Shape: {data_for_single_ticker.shape}")
-                                        else:
-                                            date_col_candidates = ['asOfDate', 'reportDate', 'endDate']
-                                            actual_date_col = None
-                                            for col_cand in date_col_candidates:
-                                                if col_cand in df_to_check.columns:
-                                                    actual_date_col = col_cand
-                                                    break
-                                            if actual_date_col:
-                                                logger.debug(f"Found potential date column '{actual_date_col}' in DataFrame for {tk_in_chunk}, {data_key}. Attempting to set as DatetimeIndex.")
-                                                try:
-                                                    df_to_check[actual_date_col] = pd.to_datetime(df_to_check[actual_date_col], errors='coerce')
-                                                    df_with_date_index = df_to_check.set_index(actual_date_col)
-                                                    if isinstance(df_with_date_index.index, pd.DatetimeIndex) and not df_with_date_index.empty:
-                                                        data_for_single_ticker = df_with_date_index
-                                                        logger.debug(f"Successfully set '{actual_date_col}' as DatetimeIndex for {tk_in_chunk}, {data_key}. Shape: {data_for_single_ticker.shape}")
-                                                    else:
-                                                        logger.warning(f"Failed to set '{actual_date_col}' as a valid DatetimeIndex for {tk_in_chunk}, {data_key}, or resulting DF empty. Discarding.")
-                                                except Exception as e_set_idx:
-                                                    logger.error(f"Error setting date column '{actual_date_col}' as index for {tk_in_chunk}, {data_key}: {e_set_idx}")
-                                            elif isinstance(df_to_check.columns, pd.DatetimeIndex):
-                                                logger.debug(f"Extracted data for {tk_in_chunk}, {data_key} is a DataFrame with DatetimeIndex columns. Attempting transpose.")
-                                                data_for_single_ticker = df_to_check.T
-                                                if not isinstance(data_for_single_ticker.index, pd.DatetimeIndex): 
-                                                    logger.warning(f"Transposed DataFrame for {tk_in_chunk}, {data_key} still does not have DatetimeIndex. Index type: {type(data_for_single_ticker.index)}. Discarding.")
-                                                    data_for_single_ticker = None
-                                                else:
-                                                    logger.debug(f"Successfully used transposed DataFrame for {tk_in_chunk}, {data_key}. Shape: {data_for_single_ticker.shape}")
-                                            else:
-                                                logger.warning(f"Extracted data for {tk_in_chunk} from 'symbol' indexed DataFrame for {data_key} is a DataFrame with an unexpected index/column structure. Type: {type(df_to_check)}, Index Type: {type(df_to_check.index)}, Columns: {df_to_check.columns}. Discarding.")
-
-                                    elif isinstance(extracted_data_for_ticker_row, pd.Series):
-                                        logger.debug(f"Attempting to reconstruct DataFrame for {tk_in_chunk}, {data_key} from Series of Series.")
-                                        reconstructed_df_data = {}
-                                        valid_item_found = False
-                                        for item_name, item_value_series in extracted_data_for_ticker_row.items():
-                                            if isinstance(item_value_series, pd.Series) and isinstance(item_value_series.index, pd.DatetimeIndex):
-                                                reconstructed_df_data[item_name] = item_value_series
-                                                valid_item_found = True
-                                        
-                                        if valid_item_found:
-                                            data_for_single_ticker = pd.DataFrame(reconstructed_df_data)
-                                            if not data_for_single_ticker.empty and isinstance(data_for_single_ticker.index, pd.DatetimeIndex):
-                                                logger.debug(f"Successfully reconstructed DataFrame for {tk_in_chunk}, {data_key} from Series of Series. Shape: {data_for_single_ticker.shape}")
-                                            elif not data_for_single_ticker.empty : 
-                                                logger.warning(f"Reconstructed DataFrame for {tk_in_chunk}, {data_key} from Series of Series does not have DatetimeIndex. Index type: {type(data_for_single_ticker.index)}. Discarding.")
-                                                data_for_single_ticker = None 
-                                        elif not extracted_data_for_ticker_row.empty: 
-                                             logger.warning(f"Could not reconstruct valid DataFrame for {tk_in_chunk}, {data_key} from Series of Series. All items might have been invalid or NaN.")
-                                    else:
-                                        logger.warning(f"Extracted data for {tk_in_chunk} from 'symbol' indexed DataFrame for {data_key} is neither a usable DataFrame nor a Series. Type: {type(extracted_data_for_ticker_row)}")
-                                else:
-                                    logger.debug(f"Ticker {tk_in_chunk} not found in 'symbol' indexed DataFrame for {data_key}.")
-                            
-                            # Case 3: Single ticker in chunk, and result is a DataFrame (assume it's for this ticker)
-                            elif len(ticker_chunk) == 1 and not df_chunk_data.empty:
-                                data_for_single_ticker = df_chunk_data
-                            
-                            # Case 4: Fallback warning for other unhandled DataFrame structures
-                            elif tk_in_chunk == ticker_chunk[0]: # Log only once per chunk for this unhandled case
-                                 logger.warning(
-                                    f"Unhandled DataFrame structure for {data_key} in chunk (tickers: {len(ticker_chunk)}). "
-                                    f"Index: {df_chunk_data.index.name if df_chunk_data.index.name else 'Unnamed'}, Type: {type(df_chunk_data.index)}, IsMulti: {isinstance(df_chunk_data.index, pd.MultiIndex)}"
-                                )
-                        elif isinstance(yq_batch_result_for_datakey, str): 
-                            if tk_in_chunk == ticker_chunk[0]: 
-                                logger.warning(f"yahooquery returned error for entire chunk for {data_key}: {yq_batch_result_for_datakey}")
-                            data_for_single_ticker = yq_batch_result_for_datakey 
-                        elif yq_batch_result_for_datakey is None:
-                            pass 
-                        else: 
-                            if tk_in_chunk == ticker_chunk[0]: 
-                                logger.warning(f"Unexpected data type from yahooquery for {data_key} for entire chunk: {type(yq_batch_result_for_datakey)}")
-                        
-                        _save_single_ticker_data_to_stage(stage_conn_chunk_save, tk_in_chunk, stage_table_name, data_for_single_ticker)
-                
-                stage_conn_chunk_save.commit()
-            logger.info(f"Saved data for chunk {i//chunk_size + 1} to staging DB.")
-        except Exception as e_chunk_processing:
-            logger.error(f"Error processing or saving chunk {i//chunk_size + 1}: {e_chunk_processing}", exc_info=True)
-            all_chunks_successful = False 
-        time.sleep(1)
-    
-    if all_chunks_successful:
-        logger.info(f"--- Finished Phase 1: All chunks processed and raw data saved to Staging DB ({raw_stage_db_path_str}) ---")
-        return True
+    if success:
+        logger.info("--- Phase 1 完成：全部数据写入成功 (%s) ---", raw_stage_db_path)
     else:
-        logger.error(f"--- Phase 1 Completed with Errors: Not all chunks processed successfully. Check logs. Staging DB: ({raw_stage_db_path_str}) ---")
-        return False
-
+        logger.warning("--- Phase 1 完成，但存在下载/写入错误，请检查日志 ---")
+    return success

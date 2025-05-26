@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from scipy.stats import linregress
 import os
 import shutil
+import json
 import warnings
 import sys
 from pathlib import Path # 如果尚未导入，请添加
@@ -31,12 +32,241 @@ except ImportError as e:
         )
         return False
     
+# ----------------------------------------------------------------------
+# DEBUG helper: quick overview of the finance DB
+# ----------------------------------------------------------------------
+def _log_finance_db_overview(db_path: str) -> None:
+    """
+    Prints table existence, row counts and a few sample tickers for the
+    finance DB to help diagnose empty‑data issues.
+    """
+    if not os.path.exists(db_path):
+        logging.error(f"[Growth‑DEBUG] Finance DB '{db_path}' does not exist.")
+        return
+    try:
+        with sqlite3.connect(db_path) as conn:
+            for tbl in ("annual_financials", "quarterly_financials"):
+                exists = conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                    (tbl,),
+                ).fetchone()[0]
+                if exists == 0:
+                    logging.warning(f"[Growth‑DEBUG] Table '{tbl}' missing.")
+                    continue
+                rows = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
+                sample = conn.execute(
+                    f"SELECT ticker FROM {tbl} LIMIT 3"
+                ).fetchall()
+                logging.info(f"[Growth‑DEBUG] {tbl}: rows={rows}, sample={sample}")
+    except sqlite3.Error as e_sql:
+        logging.error(f"[Growth‑DEBUG] Error inspecting finance DB: {e_sql}")
+
 def _get_finance_db(cfg_path: str = "config.ini") -> str:
-    """Return finance DB path from config or default."""
+    """
+    Ensure that a **final finance database** (annual_financials & quarterly_financials
+    tables) exists and is **up‑to‑date** with the latest staging database produced by
+    `acquire_raw_financial_data_to_staging`.
+
+    Workflow
+    --------
+    1.  Read `raw_stage_db` and `finance_db` paths from *cfg_path* (ini file).
+    2.  If *finance_db* is missing **or** older than *raw_stage_db*, rebuild it
+        from scratch by parsing the JSON stored in the staging tables:
+            stg_annual_* / stg_quarterly_*  (income | balance | cashflow)
+    3.  Return the absolute path to the valid *finance_db*.
+    """
     parser = configparser.ConfigParser()
     if os.path.exists(cfg_path):
         parser.read(cfg_path)
-    return parser.get("database", "finance_db", fallback="SP500_finance_data.db")
+    else:
+        logging.warning(f"Config file '{cfg_path}' not found. Falling back to defaults.")
+
+    # Paths from config (or defaults)
+    stage_db = parser.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
+    finance_db = parser.get("database", "finance_db", fallback="SP500_finance_data.db")
+
+    cfg_dir = os.path.dirname(os.path.abspath(cfg_path))
+    if not os.path.isabs(stage_db):
+        stage_db = os.path.abspath(os.path.join(cfg_dir, stage_db))
+    if not os.path.isabs(finance_db):
+        finance_db = os.path.abspath(os.path.join(cfg_dir, finance_db))
+
+    # --- Determine whether rebuild is required ---
+    rebuild_needed = True
+    if os.path.exists(finance_db) and os.path.exists(stage_db):
+        try:
+            # Re‑generate only if the staging DB is newer
+            rebuild_needed = os.path.getmtime(finance_db) < os.path.getmtime(stage_db)
+        except OSError:
+            rebuild_needed = True  # Safe default
+
+    if rebuild_needed:
+        logging.info(f"Building finance DB '{finance_db}' from staging DB '{stage_db}' …")
+        try:
+            _build_finance_db_from_staging(stage_db, finance_db)
+            logging.info("Finance DB built/updated successfully.")
+        except Exception as e:
+            logging.critical(f"Failed to build finance DB: {e}", exc_info=True)
+            raise
+
+    return finance_db
+
+
+# ----------------------------------------------------------------------
+# Helper: Convert staging JSON → final structured tables
+# ----------------------------------------------------------------------
+def _build_finance_db_from_staging(stage_db_path: str, finance_db_path: str) -> None:
+    """
+    Parse JSON blobs in staging tables and populate `annual_financials` and
+    `quarterly_financials` in *finance_db_path*.
+
+    Only the fields required by downstream processing are extracted:
+        revenue, net_income, eps, op_income, equity, total_debt,
+        ocf, capex, ebit, interest_exp
+    """
+    # Connect to DBs
+    # Ensure target directory exists for the final finance DB
+    finance_db_dir = os.path.dirname(finance_db_path)
+    if finance_db_dir and not os.path.exists(finance_db_dir):
+        try:
+            os.makedirs(finance_db_dir, exist_ok=True)
+            logging.info(f"Created directory for finance DB: {finance_db_dir}")
+        except OSError as e:
+            logging.critical(f"Failed to create directory '{finance_db_dir}' for finance DB: {e}")
+            raise
+    stage_conn = sqlite3.connect(stage_db_path)
+    fin_conn = sqlite3.connect(finance_db_path)
+
+    try:
+        # Ensure output tables exist & are emptied
+        create_tables(fin_conn)
+        fin_conn.execute("DELETE FROM annual_financials;")
+        fin_conn.execute("DELETE FROM quarterly_financials;")
+        fin_conn.commit()
+
+        # Mapping of staging tables
+        stg_tbls = {
+            "annual": {
+                "income": "stg_annual_income",
+                "balance": "stg_annual_balance",
+                "cashflow": "stg_annual_cashflow",
+            },
+            "quarterly": {
+                "income": "stg_quarterly_income",
+                "balance": "stg_quarterly_balance",
+                "cashflow": "stg_quarterly_cashflow",
+            },
+        }
+
+        # ------------------------------------------------------------------
+        # Robustness: verify that the expected staging tables exist
+        # ------------------------------------------------------------------
+        existing_tables = {
+            row[0]
+            for row in stage_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+
+        # Warn for any missing tables
+        for freq, cat_map in stg_tbls.items():
+            for cat, tbl_name in cat_map.items():
+                if tbl_name not in existing_tables:
+                    logging.warning(
+                        f"Staging table '{tbl_name}' expected for {freq}-{cat} "
+                        f"data not found in '{stage_db_path}'. Any data in this "
+                        "category will be skipped."
+                    )
+
+        # Build a list of tables that actually exist to fetch tickers from
+        ticker_source_tables = [
+            tbl_name
+            for cat_map in stg_tbls.values()
+            for tbl_name in cat_map.values()
+            if tbl_name in existing_tables
+        ]
+
+        if not ticker_source_tables:
+            logging.error(
+                "None of the expected staging tables exist. The staging "
+                "database may be empty or was not populated yet. Aborting "
+                "finance‑DB build."
+            )
+            return  # Early exit – final DB left empty but created
+
+        # ------------------------------------------------------------------
+        # Gather distinct tickers from whichever staging tables are available
+        # ------------------------------------------------------------------
+        tickers = set()
+        for tbl in ticker_source_tables:
+            try:
+                tickers.update(
+                    row[0]
+                    for row in stage_conn.execute(
+                        f"SELECT DISTINCT ticker FROM {tbl}"
+                    )
+                    if row and row[0]
+                )
+            except sqlite3.OperationalError as e_sql:
+                logging.warning(f"Could not read tickers from '{tbl}': {e_sql}")
+
+        tickers = sorted(tickers)
+        logging.info(f"Found {len(tickers)} distinct tickers in staging DB.")
+
+        for ticker in tickers:
+            period_data = {"annual": {}, "quarterly": {}}
+
+            for freq, tbl_map in stg_tbls.items():
+                for cat, tbl in tbl_map.items():
+                    cur = stage_conn.execute(
+                        f"SELECT data_json FROM {tbl} WHERE ticker = ?", (ticker,)
+                    )
+                    rec = cur.fetchone()
+                    if rec and rec[0]:
+                        try:
+                            df = pd.read_json(rec[0], orient="split")
+                            # --- Normalize index to DatetimeIndex ---
+                            if not isinstance(df.index, pd.DatetimeIndex):
+                                df.index = pd.to_datetime(df.index, errors="coerce")
+                            period_data[freq][cat] = df
+                        except ValueError as e:
+                            logging.warning(
+                                f"JSON parse error for {ticker} {tbl}: {e}"
+                            )
+
+            # Merge income + balance + cashflow for each freq
+            for freq in ("annual", "quarterly"):
+                dfs = period_data[freq]
+                if not dfs:
+                    continue
+
+                df_merged = None
+                for _, d in dfs.items():
+                    df_merged = d.copy() if df_merged is None else df_merged.join(
+                        d, how="outer", lsuffix="", rsuffix="_dup"
+                    )
+
+                # --- Ensure merged index is DatetimeIndex for downstream logic ---
+                if df_merged is not None and not isinstance(df_merged.index, pd.DatetimeIndex):
+                    df_merged.index = pd.to_datetime(df_merged.index, errors="coerce")
+
+                if df_merged is None or df_merged.empty:
+                    continue
+
+                # Remove duplicate‑suffixed columns
+                df_merged = df_merged.loc[:, ~df_merged.columns.str.endswith("_dup")]
+
+                table_name = (
+                    "annual_financials" if freq == "annual" else "quarterly_financials"
+                )
+
+                # Re‑use existing writer util
+                _ = save_financial_data(fin_conn, ticker, df_merged, table_name)
+
+        fin_conn.commit()
+    finally:
+        stage_conn.close()
+        fin_conn.close()
 
 # --- Configuration & Logging Setup ---
 warnings.filterwarnings('ignore', category=FutureWarning) # Ignore yfinance/pandas future warnings
@@ -363,6 +593,7 @@ def save_financial_data(conn, ticker, data, table_name):
         'Interest Expense': 'interest_exp', 'InterestExpense': 'interest_exp',
         'Stockholders Equity': 'equity', 'Total Stockholder Equity': 'equity', 'ShareholderEquity': 'equity', 'TotalEquityGrossMinorityInterest': 'equity',
         'Total Debt': 'total_debt',
+        'TotalDebt': 'total_debt',
         'Operating Cash Flow': 'ocf', 'OperatingCashFlow': 'ocf', 'CashFlowFromContinuingOperatingActivities': 'ocf',
         'Capital Expenditure': 'capex', 'CapitalExpenditures': 'capex',
     }
@@ -1215,6 +1446,9 @@ def compute_growth_score(db_path: str | None = None):
             # Resolve relative paths against the root config location so that a
             # value like "Gemini/DB.db" works even after changing directories.
             source_final_db = (root_config_ini_path.parent / source_final_db).resolve()
+
+        # --- DEBUG: overview of finance DB ---
+        _log_finance_db_overview(str(source_final_db))
 
         if not source_final_db.exists():
             logging.error(f"Source final database '{source_final_db}' (expected to be populated by migration) not found. Cannot proceed.")
