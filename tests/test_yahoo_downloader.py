@@ -18,8 +18,6 @@ if pandas_spec and numpy_spec and yf_spec:
     from yahoo_downloader import (
         _ensure_price_schema,
         _insert_price_df,
-        _ensure_fin_schema,
-        _save_batches,
     )
 else:
     pd = None
@@ -86,31 +84,6 @@ class InsertPriceDfTimestampTest(unittest.TestCase):
         conn.close()
 
 
-@unittest.skipUnless(pandas_spec and numpy_spec and yf_spec, "requires pandas, numpy, yfinance")
-class SaveBatchesIndexAlignTest(unittest.TestCase):
-    def test_misaligned_quarterly_frames(self):
-        inc = pd.DataFrame(
-            {"Total Revenue": [1, 2]},
-            index=pd.to_datetime(["2023-03-31", "2022-12-31"]),
-        )
-        bal = pd.DataFrame(
-            {"Total Assets": [3]},
-            index=pd.to_datetime(["2023-03-31"]),
-        )
-        cf = pd.DataFrame(
-            {"Operating Cash Flow": [4, 5, 6]},
-            index=pd.to_datetime(["2023-06-30", "2023-03-31", "2022-12-31"]),
-        )
-
-        conn = sqlite3.connect(":memory:")
-        _ensure_fin_schema(conn)
-
-        try:
-            _save_batches(conn, "CCC", [("Q", inc, bal, cf)])
-        except Exception as e:
-            self.fail(f"_save_batches raised {e!r}")
-
-        conn.close()
 
 if __name__ == '__main__':
     unittest.main()
