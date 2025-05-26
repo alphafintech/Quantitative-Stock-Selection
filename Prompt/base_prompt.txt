@@ -6,7 +6,7 @@ Concurrently, a normalized composite fundamental-growth score algorithm has been
 
 Applying these two screening algorithms, we have selected the following stocks, listed as "Ticker: (Trend Score, Fundamental Score, Final Score)":<ticker_list>. 
 
-My current portfolio includes the following holdings, displayed as "Ticker: (Cost Basis, Share Count, Stop-Loss %, Take-Profit %)": <Holdings_list>.
+My current portfolio includes the following holdings, displayed as "Ticker: (Cost Basis, Share Count, Latest price)": <Holdings_list>.
 
 
 Step 1 – Sentiment Analysis

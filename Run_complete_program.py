@@ -33,6 +33,8 @@ from pathlib import Path
 import configparser
 import datetime as dt
 import yahoo_downloader
+import sqlite3
+import re
 
 # --- 配置日志记录 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MainRunner] %(message)s')
@@ -210,6 +212,155 @@ def run_main_process():
 
         
 
+#######################################################################
+# Helper: build holdings string from Excel + latest prices DB
+#######################################################################
+def _build_holdings_string(excel_path: Path, price_db: Path | None = None) -> str:
+    """
+    Parameters
+    ----------
+    excel_path : Path
+        Excel file containing columns: Ticker, Cost Basis, Share Count.
+    price_db : Path | None
+        SQLite DB containing price history with schema:
+            price_data(ticker TEXT, date TEXT, close REAL)
+        If None, defaults to script_dir / 'data/SP500_price_data.db'.
+
+    Returns
+    -------
+    str  e.g. "(HWM:$165.09, 153, $179.00), (RCL:$240.12, 556, $230.00)"
+    """
+    if not excel_path.exists():
+        logging.error(f"[Holdings] Excel file not found: {excel_path}")
+        return "N/A"
+
+    try:
+        df = pd.read_excel(excel_path)
+    except Exception as e:
+        logging.error(f"[Holdings] Failed to read holdings Excel: {e}")
+        return "N/A"
+
+    # Resolve columns ignoring case/space/underscore/non-alpha, allow prefix matching
+    def _resolve(col_hint: str):
+        """
+        Return the actual column name that matches *col_hint* after
+        stripping spaces, underscores, and non‑alphabetic chars.
+        Accepts exact match **or** prefix/contain match to cover
+        headers like 'Ticker/Cash'.
+        """
+        norm_hint = re.sub(r"[^a-z]", "", col_hint.lower())
+        for c in df.columns:
+            norm_c = re.sub(r"[^a-z]", "", str(c).lower())
+            if norm_c == norm_hint or norm_c.startswith(norm_hint) or norm_hint.startswith(norm_c):
+                return c
+        raise KeyError(f"Column '{col_hint}' not found in {excel_path.name}")
+
+    try:
+        col_tic   = _resolve("ticker")
+        col_cost  = _resolve("cost basis")
+        col_share = _resolve("share count")
+    except KeyError as ke:
+        logging.error(f"[Holdings] {ke}")
+        return "N/A"
+
+    df = df[[col_tic, col_cost, col_share]].dropna()
+    if df.empty:
+        logging.warning(f"[Holdings] No valid rows in {excel_path.name}")
+        return "N/A"
+
+    # --- price DB ---
+    script_dir = Path(__file__).resolve().parent
+    # Try to load price_db from config.ini if not explicitly provided
+    if price_db is None:
+        cfg_path = script_dir / "config.ini"
+        if cfg_path.exists():
+            cfg_tmp = configparser.ConfigParser()
+            cfg_tmp.read(cfg_path)
+            if cfg_tmp.has_section("database"):
+                price_db_token = cfg_tmp.get("database", "price_db",
+                                             fallback="data/SP500_price_data.db")
+                price_db = (script_dir / price_db_token) if not Path(price_db_token).is_absolute() \
+                           else Path(price_db_token)
+    if price_db is None:
+        # primary fallback: root directory
+        price_db = script_dir / "SP500_price_data.db"
+        # secondary fallback: data sub‑dir
+        if not price_db.exists():
+            price_db = script_dir / "data" / "SP500_price_data.db"
+    latest_price_cache: dict[str, float] = {}
+
+    def _get_price(ticker: str) -> float | None:
+        """
+        Try to fetch the most recent close/adj_close for *ticker* from the
+        SQLite price DB. Falls back to None if not found.
+        """
+        if ticker in latest_price_cache:
+            return latest_price_cache[ticker]
+
+        price_val = None
+        if not price_db.exists():
+            logging.warning(f"[Holdings-DEBUG] price DB not found at {price_db}.")
+            latest_price_cache[ticker] = None
+            return None
+
+        try:
+            with sqlite3.connect(price_db) as conn:
+                # Gather candidate tables that have a `ticker` column
+                tbls = [
+                    r[0] for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                ]
+                price_cols = ("close", "adj_close", "close_price", "price")
+                date_cols  = ("date", "Date", "trade_date")
+                for tbl in tbls:
+                    # quick check
+                    cols = [c[1].lower() for c in conn.execute(f"PRAGMA table_info('{tbl}')")]
+                    if "ticker" not in cols:
+                        continue
+                    p_col = next((c for c in price_cols if c in cols), None)
+                    d_col = next((c for c in date_cols  if c.lower() in cols), None)
+                    if not p_col or not d_col:
+                        continue
+
+                    try:
+                        cur = conn.execute(
+                            f"""SELECT {p_col}
+                                   FROM {tbl}
+                                  WHERE UPPER(ticker)=UPPER(?)
+                              ORDER BY {d_col} DESC
+                                 LIMIT 1""",
+                            (ticker,),
+                        )
+                        row = cur.fetchone()
+                        if row and row[0] is not None:
+                            price_val = float(row[0])
+                            break
+                    except sqlite3.Error:
+                        continue
+        except Exception as e:
+            logging.warning(f"[Holdings] price db query failed: {e}")
+
+        # Debug logging
+        if price_val is None:
+            logging.warning(f"[Holdings‑DEBUG] No price found for {ticker} in {price_db.name}")
+        else:
+            logging.debug(f"[Holdings‑DEBUG] Latest price for {ticker} = {price_val:.2f}")
+        latest_price_cache[ticker] = price_val
+        return price_val
+
+    parts = []
+    for _, row in df.iterrows():
+        tic   = str(row[col_tic]).upper()
+        cost  = float(row[col_cost])
+        share = int(row[col_share])
+        price = _get_price(tic)
+        cost_str  = f"${cost:,.2f}"
+        price_str = f"${price:,.2f}" if price is not None else "NA"
+        parts.append(f"({tic}:{cost_str}, {share}, {price_str})")
+
+    return ", ".join(parts)
+
 # ------------------------------------------------------------
 # Gemini prompt generator
 # ------------------------------------------------------------
@@ -295,19 +446,12 @@ def generate_prompt_Gemini() -> str:
     ticker_list_str = ", ".join(ticker_items)
 
     # 3) 读取当前持仓
-    try:
-        holdings_token = cfg["FILES"].get("current_holdings_file_Gemini", "current_holdings.txt")
-    except KeyError:
-        holdings_token = "current_holdings.txt"
-
-    holdings_path = Path(holdings_token)
+    holdings_token = cfg["FILES"].get("current_holdings_file_Gemini",
+                                      "Portfolio/Gemini_current_holdings.xlsx")
+    holdings_path  = Path(holdings_token)
     if not holdings_path.is_absolute():
         holdings_path = script_dir / holdings_path
-    if holdings_path.exists():
-        holdings_list = holdings_path.read_text(encoding="utf-8").strip()
-    else:
-        logging.warning(f"持仓文件不存在，使用占位 'N/A': {holdings_path}")
-        holdings_list = "N/A"
+    holdings_list = _build_holdings_string(holdings_path)
 
     # 4) 读取 base_prompt 以及其他占位符内容
     prompt_common = cfg["prompt_common"]
@@ -454,11 +598,12 @@ def generate_prompt_GPT() -> str:
     ticker_list_str = ", ".join(ticker_items)
 
     # 3) 读取当前持仓
-    holdings_token = cfg["FILES"].get("current_holdings_file_GPT", "current_holdings.txt")
+    holdings_token = cfg["FILES"].get("current_holdings_file_GPT",
+                                      "Portfolio/GPT_current_holdings.xlsx")
     holdings_path  = Path(holdings_token)
     if not holdings_path.is_absolute():
         holdings_path = script_dir / holdings_path
-    holdings_list = holdings_path.read_text(encoding="utf-8").strip() if holdings_path.exists() else "N/A"
+    holdings_list = _build_holdings_string(holdings_path)
 
     # 4) base_prompt 与占位符
     prompt_common = cfg["prompt_common"]
@@ -520,11 +665,10 @@ def test_main_process():
         # 先测试 Gemini
         #yahoo_downloader.download_price_data()
         #yahoo_downloader.acquire_raw_financial_data_to_staging()
-        #yahoo_downloader.process_staged_data_to_final_db()
 
         # 先测试 Gemini
-        #change_working_directory(Gemini_dir)
-        #gemini_main_pipeline(True)
+        change_working_directory(Gemini_dir)
+        gemini_main_pipeline(True)
 
         # 再测试 GPT（若成功导入）
         if GPT_AVAILABLE:
@@ -548,6 +692,7 @@ def test_main_process():
 if __name__ == "__main__":
     overall_start_time = time.time()
     run_main_process()  # 调用封装好的主流程函数
+    #test_main_process()
     generate_prompt_Gemini()
     generate_prompt_GPT()
     overall_end_time = time.time()
