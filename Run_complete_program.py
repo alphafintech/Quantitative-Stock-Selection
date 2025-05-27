@@ -140,10 +140,12 @@ def run_main_process():
 
 
     args = parser.parse_args()
+    # 预计算 config.ini 绝对路径
+    config_path = Path(__file__).resolve().parent / "config.ini"
 
     if not args.skip_update_price_data:
         logging.info("--- 下载/更新股价数据 ---")
-        yahoo_downloader.download_price_data()
+        yahoo_downloader.download_price_data(config_file=str(config_path))
 
     if not args.skip_update_finance_data:
         logging.info("--- 下载/更新财务数据 ---")

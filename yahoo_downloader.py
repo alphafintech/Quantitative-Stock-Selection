@@ -19,9 +19,15 @@ logger = logging.getLogger(__name__)
 
 
 def _load_cfg(config_file: str = "config.ini") -> configparser.ConfigParser:
+    """
+    Load configuration file, resolving the provided path to an absolute
+    path. This ensures relative paths work no matter the current
+    working directory.
+    """
     cfg = configparser.ConfigParser()
-    if os.path.exists(config_file):
-        cfg.read(config_file)
+    cfg_path = Path(config_file).expanduser().resolve()
+    if cfg_path.exists():
+        cfg.read(cfg_path)
     return cfg
 
 
@@ -109,7 +115,7 @@ def download_price_data(
         start_date = cfg.get("data_download", "start_price_date", fallback="1900-01-01")
         if not start_date: start_date = "1900-01-01"
     if end_date is None:
-        end_date = cfg.get("data_download", "end_price_date")
+        end_date = cfg.get("data_download", "end_price_date", fallback="")
         if not end_date: end_date = datetime.date.today().strftime("%Y-%m-%d")
 
     try:
