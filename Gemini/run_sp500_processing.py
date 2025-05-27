@@ -493,9 +493,57 @@ def final_screen():
             print("Applying Combined Weighted Score method...")
             df_weighted_results = combined_weighted_score(df_processed.copy(), trend_weight, fundamental_weight)
 
-            logging.info("Applying Dual Threshold Filter method...")
-            print("Applying Dual Threshold Filter method...")
-            df_threshold_results = dual_threshold_filter(df_processed.copy(), min_trend_percentile, min_fundamental_percentile)
+            logging.info("Building Dual Threshold (rank‑based) list …")
+            print("Building Dual Threshold (rank‑based) list …")
+
+            # ---------- new rank parameters ----------
+            rank_cfg = config["RANK_FILTER"] if config.has_section("RANK_FILTER") else {}
+            top_num_trend  = int(rank_cfg.get("top_num_trend", 50))
+            top_num_growth = int(rank_cfg.get("top_num_growth", 50))
+
+            # ---------- top‑N by Trend & Fundamental ----------
+            # Prefer 'Normalized_Trend_Score' if present; fallback to Trend_Score
+            trend_sort_col = "Normalized_Trend_Score" if "Normalized_Trend_Score" in df_weighted_results.columns else "Trend_Score"
+            # --- top‑N by Trend & include ties ---
+            trend_sorted = df_weighted_results.sort_values(
+                trend_sort_col, ascending=False, na_position="last"
+            ).reset_index(drop=True)
+
+            if len(trend_sorted) >= top_num_trend:
+                threshold_trend = trend_sorted.loc[top_num_trend - 1, trend_sort_col]
+            else:
+                threshold_trend = trend_sorted[trend_sort_col].min()
+
+            top_trend_tickers = (
+                trend_sorted[trend_sorted[trend_sort_col] >= threshold_trend]["Ticker"]
+                .tolist()
+            )
+
+            # Prefer 'Overall_Score' if present; fallback to Fundamental_Score
+            fund_sort_col = "Overall_Score" if "Overall_Score" in df_weighted_results.columns else "Fundamental_Score"
+            # --- top‑N by Fundamental & include ties ---
+            fund_sorted = df_weighted_results.sort_values(
+                fund_sort_col, ascending=False, na_position="last"
+            ).reset_index(drop=True)
+
+            if len(fund_sorted) >= top_num_growth:
+                threshold_fund = fund_sorted.loc[top_num_growth - 1, fund_sort_col]
+            else:
+                threshold_fund = fund_sorted[fund_sort_col].min()
+
+            top_fund_tickers = (
+                fund_sorted[fund_sorted[fund_sort_col] >= threshold_fund]["Ticker"]
+                .tolist()
+            )
+
+            dual_tickers = set(top_trend_tickers).intersection(top_fund_tickers)
+            df_threshold_results = (
+                df_weighted_results[df_weighted_results["Ticker"].isin(dual_tickers)]
+                .copy()
+                .sort_values("Fundamental_Score", ascending=False, na_position="last")
+                .reset_index(drop=True)
+                [["Ticker", "Trend_Score", "Fundamental_Score", "Combined_Score"]]
+            )
 
             # 6. Save Results
             logging.info("Saving screening results...")
