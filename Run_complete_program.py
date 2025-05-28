@@ -1102,8 +1102,6 @@ if __name__ == "__main__":
     export_gpt_screened_to_html()
     generate_prompt_Gemini()
     generate_prompt_GPT()
-    from portfolio_yield import compute_and_plot_yield
-    compute_and_plot_yield()
     overall_end_time = time.time()
     overall_duration = overall_end_time - overall_start_time
     logging.info(f"--- 脚本总执行时间: {overall_duration:.2f} 秒 ---")
