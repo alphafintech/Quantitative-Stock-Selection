@@ -24,7 +24,6 @@ from io import StringIO # Added for reading JSON string to DataFrame
 import numpy as np
 import pandas as pd
 import yfinance as yf 
-from yahooquery import Ticker as YQTicker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
