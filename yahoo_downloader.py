@@ -5,6 +5,18 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+# Absolute path to the repository / program root (folder that contains this file)
+ROOT_DIR = Path(__file__).resolve().parent
+
+def _abs_path(path_str: str | Path) -> str:
+    """
+    Return an absolute path string that is guaranteed to live under the
+    project root (ROOT_DIR) *unless* an absolute path was explicitly given.
+    """
+    p = Path(path_str).expanduser()
+    if not p.is_absolute():
+        p = ROOT_DIR / p
+    return str(p)
 from typing import Dict, List, Tuple, Any
 import json # Added for JSON serialization
 from io import StringIO # Added for reading JSON string to DataFrame
@@ -111,6 +123,8 @@ def download_price_data(
     cfg = _load_cfg(config_file)
     if db_path is None:
         db_path = cfg.get("database", "price_db", fallback="SP500_price_data.db")
+    # ---- ensure absolute path ------------------------------------------------
+    db_path = _abs_path(db_path)
     if start_date is None:
         start_date = cfg.get("data_download", "start_price_date", fallback="1900-01-01")
         if not start_date: start_date = "1900-01-01"
@@ -146,19 +160,45 @@ def download_price_data(
 
             logger.info(f"Downloading price data for {len(valid_tickers_to_download)} tickers from {min_overall_start} to {end_date}")
             
-            df_all = yf.download(
-                list(valid_tickers_to_download.keys()),
-                start=min_overall_start,
-                end=end_date,
-                group_by="ticker",
-                progress=True,
-                auto_adjust=False, 
-                actions=False 
-            )
+            # ------------------------------------------------------------------
+            # Batched, single‑threaded download to mitigate Yahoo rate limiting
+            # ------------------------------------------------------------------
+            BATCH_SIZE = 50  # ≤50 tickers per request
+            df_parts: list[pd.DataFrame] = []
+
+            ticker_list = list(valid_tickers_to_download.keys())
+            for batch_start in range(0, len(ticker_list), BATCH_SIZE):
+                sub = ticker_list[batch_start : batch_start + BATCH_SIZE]
+                logger.info("Batch %d – downloading %d tickers: %s … %s",
+                            batch_start // BATCH_SIZE + 1, len(sub), sub[0], sub[-1])
+                try:
+                    df_chunk = yf.download(
+                        sub,
+                        start=min_overall_start,
+                        end=end_date,
+                        group_by="ticker",
+                        progress=False,
+                        auto_adjust=False,
+                        actions=False,
+                        threads=False,     # force single‑threaded inside yfinance
+                    )
+                    if df_chunk is not None and not df_chunk.empty:
+                        df_parts.append(df_chunk)
+                except Exception as e_dl:
+                    logger.warning("Batch %s…%s failed: %s", sub[0], sub[-1], e_dl)
+                    raise  # escalate so caller knows batch failed
+
+                time.sleep(0.1)  # small delay between batches to stay under rate limits
+
+            if not df_parts:
+                logger.warning("All batched downloads returned empty DataFrames.")
+                raise RuntimeError("No price data fetched from yfinance; aborting.")
+
+            df_all = pd.concat(df_parts, axis=1)
 
             if df_all.empty:
-                logger.info("No price data returned from yf.download.")
-                return
+                logger.warning("yf.download returned an empty DataFrame – possible network/limit error.")
+                raise RuntimeError("No price data fetched from yfinance; aborting.")
 
             processed_count = 0
             for tk, tk_start_date in valid_tickers_to_download.items():
@@ -173,8 +213,8 @@ def download_price_data(
                         df_single = df_all.get(tk)
                         if df_single is None or df_single.empty:
                             logger.warning("No data for ticker %s in downloaded batch.", tk)
-                            processed_count += 1
-                            continue
+                            # 抛出异常让上层知道具体缺失的 ticker
+                            raise RuntimeError(f"Price data missing for ticker {tk}")
                     else: 
                         df_single = df_all
                     
@@ -354,6 +394,8 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
     logger.info("--- Phase 1 (yfinance): 开始获取并写入 Staging DB ---")
     cfg = _load_cfg(config_file)
     raw_stage_db_path = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
+    # ---- ensure absolute path ------------------------------------------------
+    raw_stage_db_path = _abs_path(raw_stage_db_path)
     Path(raw_stage_db_path).parent.mkdir(parents=True, exist_ok=True)
 
     # 1) 读取 S&P500 列表
