@@ -91,6 +91,11 @@ _SEL_DEFAULTS: Dict[str, Any] = {
     "top_num_growth"   : 70,    # 取基本面分前 M 名
     "trend_file"       : "",    # 显式指定文件可留空
     "fund_file"        : "",
+    "trend_thresh"     : 70,
+    "fund_thresh"      : 70,
+    "growth_thresh"    : 80,
+    "w_core"           : 0.8,
+    "w_growth"         : 0.2,
 }
 
 def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
