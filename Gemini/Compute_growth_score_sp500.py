@@ -77,7 +77,7 @@ def _get_finance_db(cfg_path: str = "config.ini") -> str:
     """
     parser = configparser.ConfigParser()
     if os.path.exists(cfg_path):
-        parser.read(cfg_path)
+        parser.read(cfg_path, encoding="utf-8")
     else:
         logging.warning(f"Config file '{cfg_path}' not found. Falling back to defaults.")
 

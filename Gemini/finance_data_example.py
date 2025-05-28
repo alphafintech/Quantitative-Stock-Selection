@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [G
 def _get_finance_db(cfg_path: str = "config.ini") -> str:
     cfg = configparser.ConfigParser()
     if os.path.exists(cfg_path):
-        cfg.read(cfg_path)
+        cfg.read(cfg_path, encoding="utf-8")
     return cfg.get("database", "finance_db", fallback="Gemini_finance_data.db")
 
 def get_stock_financials(ticker: str,

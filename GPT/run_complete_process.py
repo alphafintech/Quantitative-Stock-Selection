@@ -105,7 +105,7 @@ def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
     """
 
     cfg = configparser.ConfigParser()
-    cfg.read(cfg_path)
+    cfg.read(cfg_path, encoding="utf-8")
 
     sel = {k: v for k, v in _SEL_DEFAULTS.items()}  # clone defaults
     if cfg.has_section("selection"):

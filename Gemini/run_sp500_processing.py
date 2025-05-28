@@ -67,7 +67,7 @@ def load_run_config(config_file=CONFIG_FILE_RUN):
     config = configparser.ConfigParser()
     if not os.path.exists(config_file):
         raise FileNotFoundError(f"Run configuration file '{config_file}' not found.")
-    config.read(config_file)
+    config.read(config_file, encoding="utf-8")
     logging.info(f"Run configuration loaded from '{config_file}'.")
     return config
 
