@@ -37,7 +37,7 @@ import shutil
 def _get_price_db(cfg_path: str = "config.ini") -> str:
     cfg = configparser.ConfigParser()
     if os.path.exists(cfg_path):
-        cfg.read(cfg_path)
+        cfg.read(cfg_path, encoding="utf-8")
     return cfg.get("database", "price_db", fallback="SP500_price_data.db")
 
 # Ensure openpyxl is installed for Excel export

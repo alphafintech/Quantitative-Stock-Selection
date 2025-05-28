@@ -37,7 +37,7 @@ def _get_finance_db(cfg_path: str = "config.ini") -> str:
         if alt.exists():
             path = alt
     if path.exists():
-        cfg.read(path)
+        cfg.read(path, encoding="utf-8")
     db_val = None
     if cfg.has_option("database", "GPT_finance_db"):
         db_val = cfg.get("database", "GPT_finance_db")
@@ -225,7 +225,7 @@ def _prepare_gpt_finance_db(cfg_path: str = "config.ini") -> str:
         cfg_file = (Path(__file__).resolve().parent.parent / cfg_file).resolve()
 
     cfg = configparser.ConfigParser()
-    cfg.read(cfg_file)
+    cfg.read(cfg_file, encoding="utf-8")
 
     stage_val = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
     gpt_val   = cfg.get("database", "GPT_finance_db", fallback="GPT/SP500_finance_data_GPT.db")
@@ -292,7 +292,7 @@ def ensure_config() -> configparser.ConfigParser:
         print("[INFO] Generated default config_finance.ini")
 
     cfg = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
-    cfg.read(CONFIG_FILE)
+    cfg.read(CONFIG_FILE, encoding="utf-8")
     base = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
     base.read_string(DEFAULT_CONFIG)
 
@@ -304,7 +304,8 @@ def ensure_config() -> configparser.ConfigParser:
             if not cfg.has_option(sec, k):
                 cfg.set(sec, k, v); changed = True
     if changed:
-        with CONFIG_FILE.open("w") as f: cfg.write(f)
+        with CONFIG_FILE.open("w", encoding="utf-8") as f:
+            cfg.write(f)
         print("[INFO] Missing keys added to config")
     return cfg
 
