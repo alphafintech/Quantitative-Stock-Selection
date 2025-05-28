@@ -276,7 +276,7 @@ def _build_holdings_string(excel_path: Path, price_db: Path | None = None) -> st
         cfg_path = script_dir / "config.ini"
         if cfg_path.exists():
             cfg_tmp = configparser.ConfigParser()
-            cfg_tmp.read(cfg_path)
+            cfg_tmp.read(cfg_path, encoding="utf-8")
             if cfg_tmp.has_section("database"):
                 price_db_token = cfg_tmp.get("database", "price_db",
                                              fallback="data/SP500_price_data.db")
@@ -410,7 +410,7 @@ def generate_prompt_Gemini() -> str:
         raise FileNotFoundError(f"配置文件不存在: {cfg_path}")
 
     cfg = configparser.ConfigParser()
-    cfg.read(cfg_path)
+    cfg.read(cfg_path, encoding="utf-8")
 
     # 1) 定位 Excel 路径
     try:
@@ -567,7 +567,7 @@ def generate_prompt_GPT() -> str:
         raise FileNotFoundError(f"配置文件不存在: {cfg_path}")
 
     cfg = configparser.ConfigParser()
-    cfg.read(cfg_path)
+    cfg.read(cfg_path, encoding="utf-8")
 
     # 1) 定位 Excel 路径
     try:
@@ -799,7 +799,7 @@ def export_gemini_screened_to_html() -> Path | None:
         return None
 
     cfg = configparser.ConfigParser()
-    cfg.read(cfg_path)
+    cfg.read(cfg_path, encoding="utf-8")
 
     try:
         excel_token = cfg["FILES"]["screened_stocks_file_Gemini"]
@@ -963,7 +963,7 @@ def export_gpt_screened_to_html() -> Path | None:
     """
     sd = Path(__file__).resolve().parent
     cfg = configparser.ConfigParser()
-    cfg.read(sd / "config.ini")
+    cfg.read(sd / "config.ini", encoding="utf-8")
 
     comp_token = cfg["FILES"].get("screened_stocks_file_GPT",
                                   "GPT/results/composite_selection.xlsx")

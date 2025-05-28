@@ -38,7 +38,7 @@ def _load_cfg(config_file: str = "config.ini") -> configparser.ConfigParser:
     cfg = configparser.ConfigParser()
     cfg_path = Path(config_file).expanduser().resolve()
     if cfg_path.exists():
-        cfg.read(cfg_path)
+        cfg.read(cfg_path, encoding="utf-8")
     return cfg
 
 

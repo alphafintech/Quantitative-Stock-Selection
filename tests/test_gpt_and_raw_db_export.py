@@ -26,7 +26,7 @@ class GptAndRawDbExportTest(unittest.TestCase):
     def setUp(self):
         repo_root = Path(__file__).resolve().parents[1]
         cfg = configparser.ConfigParser()
-        cfg.read(repo_root / "config.ini")
+        cfg.read(repo_root / "config.ini", encoding="utf-8")
         gpt_name = cfg.get("database", "GPT_finance_db", fallback="GPT/SP500_finance_data_GPT.db")
         raw_name = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
         self.gpt_db_path = repo_root / gpt_name

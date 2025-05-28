@@ -31,7 +31,7 @@ def _get_price_db(cfg_path: str = "config.ini") -> str:
         if alt.exists():
             path = alt
     if path.exists():
-        cfg.read(path)
+        cfg.read(path, encoding="utf-8")
     return cfg.get("database", "price_db", fallback="SP500_price_data.db")
 
 
@@ -52,7 +52,7 @@ def _prepare_gpt_db(cfg_path: str = "config.ini") -> str:
         if alt.exists():
             path = alt
     if path.exists():
-        cfg.read(path)
+        cfg.read(path, encoding="utf-8")
 
     src = cfg.get("database", "price_db", fallback="SP500_price_data.db")
     dst = cfg.get("database", "gpt_price_db", fallback="SP500_price_data_GPT.db")
@@ -186,7 +186,7 @@ def read_config(config_file="config.ini"):
     """
     config = configparser.ConfigParser()
     if os.path.exists(config_file):
-        config.read(config_file)
+        config.read(config_file, encoding="utf-8")
         print(f"Reading configuration from {config_file}...")
     else:
         print(f"Config file {config_file} not found. Using default date values.")
@@ -647,7 +647,7 @@ def calculate_and_store_technical_indicators(db_path):
 
     # Read configuration values from config.ini.
     config = configparser.ConfigParser()
-    config.read(config_file)
+    config.read(config_file, encoding="utf-8")
     indicator_conf = config["indicator"] if "indicator" in config else {}
 
     try:
@@ -824,7 +824,7 @@ def calculate_trend_indicators(db_path):
 
     # --- Read Configuration ---
     config = configparser.ConfigParser()
-    config.read(config_file)
+    config.read(config_file, encoding="utf-8")
     indicator_conf = config["indicator"] if "indicator" in config else {}
 
     try:
@@ -1032,7 +1032,7 @@ def export_trend_excel(df: pd.DataFrame, out_path: str | None = None):
 
     # -- 读取配置 --
     cfg = configparser.ConfigParser()
-    cfg.read(Path(__file__).with_name("config_trend.ini"))
+    cfg.read(Path(__file__).with_name("config_trend.ini"), encoding="utf-8")
     cfg_out = None
     if cfg.has_section("trend_score") and cfg.has_option("trend_score", "excel_file_name"):
         cfg_out = cfg["trend_score"]["excel_file_name"].strip()
@@ -1087,7 +1087,7 @@ def calculate_and_store_trend_scores(db_path, config_path="config.ini"):
 
     # ---------- 读取配置 ----------
     cfg = configparser.ConfigParser()
-    cfg.read(config_path)
+    cfg.read(config_path, encoding="utf-8")
     tc = cfg["trend_score"] if "trend_score" in cfg else {}
 
     slope_window = int(tc.get("slope_window", 20))
@@ -1360,7 +1360,7 @@ def run_process_control(stage: int, db_path: str | None = None):
 if __name__ == '__main__':
     # 从 config.ini 读取 runstage，默认 0
     cfg = configparser.ConfigParser()
-    cfg.read(config_file)
+    cfg.read(config_file, encoding="utf-8")
     runstage = int(cfg.get("run_control", "runstage", fallback="0"))
     print(f"[Main] runstage = {runstage}")
     run_process_control(runstage)

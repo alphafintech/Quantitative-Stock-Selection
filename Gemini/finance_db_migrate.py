@@ -303,7 +303,7 @@ def _get_db_paths_from_config(config_file_path: str) -> Tuple[str | None, str | 
         logger.error(f"Config file not found at: {config_file_path}")
         return None, None
         
-    parser.read(config_file_path)
+    parser.read(config_file_path, encoding="utf-8")
     
     config_dir = Path(config_file_path).resolve().parent
 
@@ -393,7 +393,7 @@ def main(argv=None):
             (root_dir_for_dummy / "data").mkdir(parents=True, exist_ok=True)
 
             try:
-                with open(config_path_to_use, "w") as configfile:
+                with open(config_path_to_use, "w", encoding="utf-8") as configfile:
                     dummy_config.write(configfile)
                 logger.info(f"Created a dummy {config_path_to_use}. Please review paths.")
             except OSError as e:
