@@ -68,3 +68,37 @@ python -m Gemini.finance_db_migrate --config config.ini
 ```
 
 The script does nothing when the target tables already contain data.
+
+## Running the complete workflow
+
+Use `Run_complete_program.py` to update data, run both the Gemini and GPT pipelines and generate the final prompts. The script writes the resulting HTML reports and prompt files into the directory defined by `output_dir` (default `result_output`):
+
+```bash
+python Run_complete_program.py [options]
+```
+
+Supported options:
+
+* `--skip-update-price-data` – reuse existing price history.
+* `--skip-update-finance-data` – reuse existing fundamental data.
+* `--skip-Gemini-pipeline` – do not run the Gemini steps.
+* `--skip-GPT-pipeline` – do not run the GPT steps.
+
+Convenience scripts in `scripts/` mirror these options for Linux (`.sh`) and Windows (`.bat`).
+
+### Prompt and HTML outputs
+
+After each run the utility exports the screening results to HTML with `export_gemini_screened_to_html()` and `export_gpt_screened_to_html()` and generates two prompt files for Gemini and GPT. Check the `Output/` directory for the generated `AI_selection_Prompt_Gemini.txt` and `AI_selection_Prompt_GPT.txt`.
+
+### Portfolio performance helper
+
+`portfolio_yield.py` reads `Portfolio/portfolio_performance.xlsx`, calculates cumulative returns for Gemini, ChatGPT and the S&P 500 and saves an updated Excel file and comparison chart in `result_output/`.
+
+### Running tests
+
+Install the packages from `requirements.txt` and run:
+
+```bash
+pytest -q
+```
+
