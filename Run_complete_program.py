@@ -149,7 +149,9 @@ def run_main_process():
 
     if not args.skip_update_finance_data:
         logging.info("--- 下载/更新财务数据 ---")
-        yahoo_downloader.acquire_raw_financial_data_to_staging()
+        yahoo_downloader.acquire_raw_financial_data_to_staging(
+            config_file=str(config_path)
+        )
 
 
     # --- 执行 Gemini 流程 (如果可用且未被跳过) ---
@@ -1065,8 +1067,9 @@ def test_main_process():
     """
     try:
         # 先测试 Gemini
-        #yahoo_downloader.download_price_data()
-        #yahoo_downloader.acquire_raw_financial_data_to_staging()
+        cfg_path = Path(__file__).resolve().parent / "config.ini"
+        yahoo_downloader.download_price_data(config_file=str(cfg_path))
+        yahoo_downloader.acquire_raw_financial_data_to_staging(config_file=str(cfg_path))
 
         # 先测试 Gemini
         change_working_directory(Gemini_dir)
