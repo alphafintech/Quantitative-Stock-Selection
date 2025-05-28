@@ -9,3 +9,5 @@ openpyxl
 sqlalchemy
 tqdm
 scipy
+matplotlib
+yahooquery

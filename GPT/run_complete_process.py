@@ -89,6 +89,11 @@ _SEL_DEFAULTS: Dict[str, Any] = {
     "output_name"      : "composite_selection.xlsx",
     "top_num_trend"    : 100,   # 取趋势分前 N 名
     "top_num_growth"   : 70,    # 取基本面分前 M 名
+    "trend_thresh"    : 70,
+    "fund_thresh"     : 70,
+    "growth_thresh"   : 80,
+    "w_core"          : 0.8,
+    "w_growth"        : 0.2,
     "trend_file"       : "",    # 显式指定文件可留空
     "fund_file"        : "",
 }
