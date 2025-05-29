@@ -1,4 +1,4 @@
-BJECTIVE  
+OBJECTIVE  
 Measure the short- to medium-term price momentum of every S&P 500 stock and output a 0-to-100 **Trend Score**.  The score blends ten technical signals that cover price structure, momentum, relative strength and volume confirmation, then ranks all tickers from strongest to weakest.
 
 I. CORE METRICS AND HOW EACH IS CALCULATED  
