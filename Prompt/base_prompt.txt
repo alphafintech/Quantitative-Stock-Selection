@@ -33,7 +33,7 @@ Examine contemporaneous trends in the S&P 500 and Nasdaq Composite indices withi
 Step 3 – Portfolio Adjustment and Rationale
 Based on the latest fundamental, sentiment, and technical analyses of both my existing holdings and the screened stock selections—together with the current macroeconomic climate and market conditions as of <end_date>—recommend adjustments to optimize my portfolio.
 Specifically:
-* I have provided the latest market prices for each stock in my current holdings list in the format 'Ticker: (Cost Basis, Share Count, Latest Price),' where the last item represents the most recent price. Using these latest prices, calculate the total assets by summing the market value of all existing holdings (latest price × number of shares) along with the current cash balance.
+* To help you make a more informed decision, I’ve listed the most recent market prices for each stock in my current portfolio. The format is: ‘Ticker: (Cost Basis, Share Count, Latest Price),’ where the last value indicates the latest available market price.
 * Construct an optimized portfolio by selecting stocks exclusively from the combined set of my current holdings and the screened stocks.
 * The optimized portfolio should hold no more than <maxi_num_stocks> stocks, including cash if justified.
 * Ensure the total portfolio weights sum to exactly 100%.
@@ -43,8 +43,7 @@ Specifically:
 
 For each recommended stock or cash allocation, provide:
 	1.	Rationale for selection. Clearly explain the reasoning behind choosing each stock or maintaining cash.
-	2.	Determine the investment allocation and provide the rationale, along with a specific trading strategy:
-Based on the current total assets, decide how much capital to allocate to the stock in question, and explain the reasoning behind this allocation.
+	2.	Determine the investment allocation and provide the rationale。
 	3.	Define the exit strategy for the stock:
 First, identify the stock’s latest price. Then, based on the current entry price, set a stop-loss level by specifying a percentage below the entry price and calculate the exact stop-loss price.
 Also, set a take-profit level by specifying a percentage above the entry price and calculate the take-profit price.
@@ -53,6 +52,8 @@ The exit strategy should be informed by recent price levels, key technical suppo
 	•	(a) Fundamental factors (e.g., earnings growth, valuation metrics).
 	•	(b) Sentiment factors (e.g., investor perception, social-media buzz).
 	•	(c) Technical factors (e.g., momentum, key support/resistance levels).
+	5. Perform a technical analysis on this stock to determine whether the current price I’ve provided is a good buying opportunity. If it isn’t, suggest a price range that you believe would be more suitable for entry.
+
 
 step 4 - Present your recommended stock and cash positions separately using both table and text formats:
 - Table Format:
