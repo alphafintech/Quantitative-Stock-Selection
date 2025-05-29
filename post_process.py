@@ -168,6 +168,7 @@ def rebalance_portfolio(
     price_db_path: str | Path,
     adjustment_txt_path: str | Path,
     output_html_path: str | Path,
+    report_title: str = "Portfolio Rebalance Report",
 ) -> None:
     """
     End‑to‑end rebalance planner.
@@ -182,6 +183,8 @@ def rebalance_portfolio(
         Path to ``Gemini_portfolio_adjustment.txt`` that specifies target weights.
     output_html_path
         Where to save the resulting HTML report.
+    report_title
+        HTML report <title> and <h1> text (default "Portfolio Rebalance Report").
     """
     holdings_path = Path(holdings_xlsx_path)
     db_path = Path(price_db_path)
@@ -336,9 +339,12 @@ def rebalance_portfolio(
         .reset_index(drop=True)
     )
 
-    df_trades = pd.DataFrame(trade_rows).sort_values(
-        "Ticker"
-    )  # deterministic order
+    # sort trades by absolute estimated trade value, highest first
+    df_trades = (
+        pd.DataFrame(trade_rows)
+        .sort_values("Est. Trade Value", ascending=False)
+        .reset_index(drop=True)
+    )
 
     df_after = pd.DataFrame(
         after_rows,
@@ -400,11 +406,11 @@ def rebalance_portfolio(
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Gemini Portfolio Rebalance Report</title>
+    <title>{report_title}</title>
     <style>{css}</style>
 </head>
 <body>
-    <h1>Gemini Portfolio Rebalance Report</h1>
+    <h1>{report_title}</h1>
     <h2>Summary</h2>
     {_tbl(summary, index=False)}
     <h2>Before Rebalance</h2>
@@ -449,6 +455,7 @@ def rebalance_GPT_portfolio() -> None:
         price_db_path=price_db_path,
         adjustment_txt_path=adjustment_txt_path,
         output_html_path=output_html_path,
+        report_title = "GPT Portfolio Rebalance Report",
     )
 
 def rebalance_Gemini_portfolio() -> None:
@@ -475,6 +482,7 @@ def rebalance_Gemini_portfolio() -> None:
         price_db_path=price_db_path,
         adjustment_txt_path=adjustment_txt_path,
         output_html_path=output_html_path,
+        report_title = "Gemini Portfolio Rebalance Report",
     )
 def main() -> None:
     """
