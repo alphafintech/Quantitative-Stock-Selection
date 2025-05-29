@@ -499,6 +499,21 @@ def generate_prompt_Gemini() -> str:
     if ("end_date" not in prompt_common) or (prompt_common.get("end_date", "").strip() == ""):
         prompt_common["end_date"] = dt.date.today().strftime("%Y-%m-%d")
 
+    # --- Ensure start_date (derive from end_date and previous_days) ----------
+    if ("start_date" not in prompt_common) or (prompt_common.get("start_date", "").strip() == ""):
+        # previous_days comes from [prompt_common]; default to 14 if missing/invalid
+        try:
+            prev_days = int(prompt_common.get("previous_days", "14").strip())
+        except ValueError:
+            prev_days = 14
+        try:
+            end_dt = dt.date.fromisoformat(prompt_common["end_date"])
+        except ValueError:
+            # Fallback: treat as today if end_date malformed
+            end_dt = dt.date.today()
+        start_dt = end_dt - dt.timedelta(days=prev_days)
+        prompt_common["start_date"] = start_dt.strftime("%Y-%m-%d")
+
     # 对 [prompt_common] 其余键同样支持“指向 txt 文件”
     for key, value in prompt_common.items():
         if key == "base_prompt":
@@ -642,6 +657,19 @@ def generate_prompt_GPT() -> str:
     # end_date 默认化
     if ("end_date" not in prompt_common) or (prompt_common.get("end_date", "").strip() == ""):
         prompt_common["end_date"] = dt.date.today().strftime("%Y-%m-%d")
+
+    # --- Ensure start_date (derive from end_date and previous_days) ----------
+    if ("start_date" not in prompt_common) or (prompt_common.get("start_date", "").strip() == ""):
+        try:
+            prev_days = int(prompt_common.get("previous_days", "14").strip())
+        except ValueError:
+            prev_days = 14
+        try:
+            end_dt = dt.date.fromisoformat(prompt_common["end_date"])
+        except ValueError:
+            end_dt = dt.date.today()
+        start_dt = end_dt - dt.timedelta(days=prev_days)
+        prompt_common["start_date"] = start_dt.strftime("%Y-%m-%d")
 
     # 4b) 替换 [prompt_common] 其余键
     for key, value in prompt_common.items():
