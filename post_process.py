@@ -122,8 +122,9 @@ def _parse_adjustment_file(path: Path) -> Dict[str, float]:
     """
     Parse ``Gemini_portfolio_adjustment.txt`` style file.
 
-    Expected pattern per line:  ``<ticker>: <pct>%`` (case‑insensitive).
+    Expected pattern:  ``<ticker>: <pct>%`` (case‑insensitive) — items may be separated by newlines *or* by commas/Chinese commas on the same line.
     Additional commentary is ignored.
+        The ticker‑percentage pair may optionally be wrapped in ASCII ``()`` or full‑width ``（）`` parentheses.
 
     Returns
     -------
@@ -132,18 +133,24 @@ def _parse_adjustment_file(path: Path) -> Dict[str, float]:
     """
     # Support both ASCII and full‑width variants of colon (:) and percent (%)
     pattern = re.compile(
-        r"^\s*([A-Za-z0-9\.\-\_]+)\s*[：:]\s*([\d\.]+)\s*[％%]",
+        r"^\s*[（(]?\s*([A-Za-z0-9\.\-\_]+)\s*[：:]\s*([\d\.]+)\s*[％%]\s*[)）]?",
         flags=re.UNICODE,
     )
     weights: Dict[str, float] = {}
 
     for raw_line in Path(path).read_text(encoding="utf-8").splitlines():
         # Remove common bullet symbols or list markers before attempting to parse
-        line = raw_line.lstrip().lstrip("•●*-").strip()
-        m = pattern.search(line)
-        if m:
-            ticker, pct = m.groups()
-            weights[ticker.upper()] = float(pct)
+        raw_line = raw_line.lstrip().lstrip("•●*-").strip()
+        # re.split used here to accept both English and Chinese commas
+        # Split a single line into possible ticker‑weight segments by ASCII or full‑width commas
+        for segment in re.split(r"[，,]", raw_line):
+            seg = segment.strip()
+            if not seg:
+                continue
+            m = pattern.match(seg)
+            if m:
+                ticker, pct = m.groups()
+                weights[ticker.upper()] = float(pct)
 
     if not weights:
         raise ValueError(f"No weights parsed from {path}")
