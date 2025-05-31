@@ -261,6 +261,22 @@ def rebalance_portfolio(
     tgt_weights = _parse_adjustment_file(adj_path)
     _LOGGER.info("Target weights: %s", tgt_weights)
 
+    # ------------------------------------------------------------------ #
+    # 3a) Ensure we have prices for every ticker appearing in target weights
+    # ------------------------------------------------------------------ #
+    extra_tickers = {
+        t for t in tgt_weights.keys()
+        if t != "CASH" and t not in prices
+    }
+    if extra_tickers:
+        _LOGGER.info(
+            "Fetching prices for tickers not in current holdings: %s",
+            ", ".join(sorted(extra_tickers)),
+        )
+        with sqlite3.connect(db_path) as conn:
+            for t in extra_tickers:
+                prices[t] = _get_latest_price(conn, t)
+
     # ensure every current ticker present (default 0 % for clearing)
     for t in df_before["Ticker"]:
         tgt_weights.setdefault(t, 0.0)
@@ -353,16 +369,20 @@ def rebalance_portfolio(
         .reset_index(drop=True)
     )
 
-    df_after = pd.DataFrame(
-        after_rows,
-        columns=[
-            "Ticker",
-            "New Shares",
-            "Latest Price",
-            "New Position Value",
-            "Weight %",
-        ],
-    ).sort_values("Ticker")
+    df_after = (
+        pd.DataFrame(
+            after_rows,
+            columns=[
+                "Ticker",
+                "New Shares",
+                "Latest Price",
+                "New Position Value",
+                "Weight %",
+            ],
+        )
+        .sort_values("Weight %", ascending=False)
+        .reset_index(drop=True)
+    )
 
     summary = pd.DataFrame(
         {
