@@ -344,6 +344,82 @@ def _fetch_fin_statements_yf(ticker: str) -> Dict[str, Any]:
         return {}
     
 
+# -----------------------------------------------------------------------------
+# Completeness check helper (horizontal + vertical)
+# -----------------------------------------------------------------------------
+def _filter_latest_quarter(
+    df: pd.DataFrame,
+    horiz_thresh: float = 0.5,
+    vert_thresh: float = 0.2,
+    history_qtrs: int = 8,
+    structural_presence_thresh: float = 0.2,
+) -> tuple[pd.DataFrame, bool]:
+    """
+    Apply horizontal + vertical completeness rules to a quarterly statement
+    DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Quarterly statement where each row is a period (index = period end).
+    horiz_thresh : float
+        Initial “raw” missing‑ratio threshold for the latest quarter.
+    vert_thresh : float
+        Missing‑ratio threshold *after* removing structurally absent columns.
+    history_qtrs : int
+        How many previous quarters to inspect when determining structural
+        absence.  Default 8 (~2 years).
+    structural_presence_thresh : float
+        A column is considered *optional* if its historical presence rate
+        (non‑NA share) ≤ this value.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, bool]
+        (Possibly trimmed DataFrame, is_complete_flag).  If the latest quarter
+        is deemed incomplete, that row is removed from the returned DataFrame.
+    """
+    if df is None or df.empty:
+        return df, False
+
+    df = df.sort_index()  # ensure ascending order
+    latest_row = df.iloc[-1]
+
+    # 1) Horizontal missing ratio (raw)
+    horiz_missing = latest_row.isna().mean()
+
+    # 2) Identify structurally optional columns based on history
+    df_hist = df.iloc[-(history_qtrs + 1):-1]  # previous N quarters
+    if df_hist.empty:
+        presence_rate = pd.Series([], dtype=float)
+    else:
+        presence_rate = df_hist.notna().mean()
+
+    optional_cols = presence_rate[presence_rate <= structural_presence_thresh].index
+
+    # 3) Vertical missing ratio after removing optional columns
+    considered_cols = latest_row.drop(labels=optional_cols, errors="ignore")
+    if considered_cols.empty:
+        vert_missing = 1.0  # treat as fully missing if nothing to check
+    else:
+        vert_missing = considered_cols.isna().mean()
+
+    # 4) Final completeness decision
+    is_complete = vert_missing <= vert_thresh
+
+    # Keep a debug log
+    logger.debug(
+        "Completeness chk – horiz: %.2f vert: %.2f (opt cols: %d) → %s",
+        horiz_missing, vert_missing, len(optional_cols), "OK" if is_complete else "FAIL"
+    )
+
+    # If incomplete, drop latest row before returning
+    if not is_complete:
+        df = df.iloc[:-1]
+
+    return df, is_complete
+    
+
 # --- Helper function to save single ticker data to staging DB ---
 def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: str, table_name: str, data_to_save: Any):
     """
@@ -392,6 +468,10 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
     """
     logger.info("--- Phase 1 (yfinance): 开始获取并写入 Staging DB ---")
     cfg = _load_cfg(config_file)
+    # ---------------- completeness thresholds -----------------------------
+    horiz_thresh = cfg.getfloat("completeness", "latest_qtr_max_gap", fallback=0.5)
+    vert_thresh  = cfg.getfloat("completeness", "after_filter_max_gap", fallback=0.2)
+    history_qtrs = cfg.getint("completeness", "history_quarters", fallback=8)
     raw_stage_db_path = cfg.get("database", "raw_stage_db", fallback="data/SP500_raw_stage.db")
     # ---- ensure absolute path ------------------------------------------------
     raw_stage_db_path = _abs_path(raw_stage_db_path)
@@ -431,6 +511,22 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
             success = False
             continue
 
+        # ------------------------------------------------------------------
+        # Apply completeness filtering (horizontal + vertical) to quarterly dfs
+        # ------------------------------------------------------------------
+        for key in ("q_incs", "q_bals", "q_cfs"):
+            df_q = fin_data.get(key)
+            if isinstance(df_q, pd.DataFrame) and not df_q.empty:
+                df_q_filt, ok = _filter_latest_quarter(
+                    df_q,
+                    horiz_thresh=horiz_thresh,
+                    vert_thresh=vert_thresh,
+                    history_qtrs=history_qtrs,
+                )
+                fin_data[key] = df_q_filt
+                if not ok:
+                    logger.info("%s latest quarter incomplete for %s – row dropped", key, tk)
+
         # 写入 DB：沿用旧的工具函数
         try:
             with sqlite3.connect(raw_stage_db_path) as conn:
@@ -449,3 +545,103 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
     else:
         logger.warning("--- Phase 1 完成，但存在下载/写入错误，请检查日志 ---")
     return success
+
+
+# =============================================================================
+# Convenience – export finance DB data for a single ticker to Excel
+# =============================================================================
+def export_finance_data_to_excel(
+    ticker: str,
+    output_path: str | None = None,
+    db_path: str | None = None,
+    config_file: str = "config.ini",
+) -> str:
+    """
+    Export **all** rows for ``ticker`` from every table inside the finance
+    database (usually *SP500_raw_finance.db*) into a single Excel workbook.
+    Each SQLite table is written to its own sheet (Excel's 31‑character limit
+    per sheet name is respected).
+
+    Parameters
+    ----------
+    ticker : str
+        Stock symbol to export (e.g. ``"NVDA"``).
+    output_path : str | None, default None
+        Destination .xlsx path.  If *None*, the file will be created in the
+        project root as ``"{ticker}_raw_finance.xlsx"``.
+    db_path : str | None, default None
+        Path to the SQLite finance DB.  If *None*, the value is taken from
+        the ``[database] finance_db`` key in *config.ini*, falling back to
+        ``"SP500_raw_finance.db"`` under the project root.
+    config_file : str, default "config.ini"
+        Config file used to resolve ``db_path`` when *db_path* is *None*.
+
+    Returns
+    -------
+    str
+        Absolute path of the created Excel workbook.
+    """
+    logger.info("=== Exporting finance DB for %s ===", ticker)
+    cfg = _load_cfg(config_file)
+
+    # ------------------------------------------------------------------ #
+    # Resolve finance DB path & output file path
+    # ------------------------------------------------------------------ #
+    if db_path is None:
+        db_path = cfg.get("database", "finance_db", fallback="SP500_raw_finance.db")
+    db_path = _abs_path(db_path)
+
+    if output_path is None:
+        output_path = f"{ticker}_raw_finance.xlsx"
+    output_path = _abs_path(output_path)
+
+    # ------------------------------------------------------------------ #
+    # Iterate over every SQLite table and export rows for this ticker
+    # ------------------------------------------------------------------ #
+    exported_cnt = 0
+    with sqlite3.connect(db_path) as conn, pd.ExcelWriter(output_path) as writer:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+        table_names = [row[0] for row in cur.fetchall()]
+
+        for tbl in table_names:
+            # ensure the table actually has a 'ticker' column
+            cur.execute(f"PRAGMA table_info({tbl})")
+            cols = [info[1] for info in cur.fetchall()]
+            if "ticker" not in cols:
+                continue  # skip tables without ticker segregation
+
+            df = pd.read_sql_query(
+                f"SELECT * FROM {tbl} WHERE ticker = ?",
+                conn,
+                params=(ticker,),
+            )
+            if df.empty:
+                continue  # nothing to write for this table
+
+            # defensive: drop duplicate columns if any
+            df = df.loc[:, ~df.columns.duplicated()]
+
+            # Write DataFrame – sheet name capped at 31 chars for Excel
+            df.to_excel(writer, sheet_name=tbl[:31], index=False)
+            logger.debug("  • %s → %d rows", tbl, len(df))
+            exported_cnt += 1
+
+    if exported_cnt == 0:
+        logger.warning(
+            "No rows found for ticker %s in finance DB (%s)",
+            ticker,
+            db_path,
+        )
+    else:
+        logger.info(
+            "Finished exporting %d table(s) for %s → %s",
+            exported_cnt,
+            ticker,
+            output_path,
+        )
+
+    return output_path
