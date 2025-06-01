@@ -6,7 +6,7 @@ import traceback
 from typing import Dict
 
 def export_ticker_financials_to_excel(ticker: str,
-                                      cfg_path: str = "config_finance.ini",
+                                      cfg_path: str | Path | None = None,
                                       raw_table: str = "raw_financials",
                                       metrics_table: str = "derived_metrics") -> Path:
     """
@@ -15,8 +15,8 @@ def export_ticker_financials_to_excel(ticker: str,
     ----
     ticker : str
         目标股票代码，大小写不敏感（函数内部统一大写比较）
-    cfg_path : str
-        config_finance.ini 的路径；默认与脚本同目录
+    cfg_path : str | Path | None
+        config_finance.ini 的路径；默认 None 时自动指向程序根目录 /GPT/config_finance.ini
     raw_table / metrics_table : str
         表名，如有自定义可修改
 
@@ -25,11 +25,18 @@ def export_ticker_financials_to_excel(ticker: str,
     Path
         生成的 Excel 文件路径
     """
+    # 将 cfg_path 解析为绝对路径（默认指向程序根目录 /GPT/config_finance.ini）
+    if cfg_path is None:
+        cfg_path = Path(__file__).parent / "config_finance.ini"
+    else:
+        cfg_path = Path(cfg_path)
+        if not cfg_path.is_absolute():
+            cfg_path = Path(__file__).parent / cfg_path
     # 读取 db 路径
     cfg = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
-    cfg.read(cfg_path, encoding="utf-8")
+    cfg.read(str(cfg_path), encoding="utf-8")
     db_name = cfg["database"].get("db_name", "SP500_finance_data.db")
-    db_path = Path(cfg_path).parent / db_name
+    db_path = cfg_path.parent / db_name
 
     if not db_path.exists():
         raise FileNotFoundError(f"数据库文件不存在: {db_path}")
@@ -81,4 +88,7 @@ def export_ticker_financials_to_excel(ticker: str,
     print(f"[INFO] 已导出到 {out_path.resolve()}")
     return out_path
 
+# ========= 使用示例 =========
+if __name__ == "__main__":
+    export_ticker_financials_to_excel("NVDA")
 
