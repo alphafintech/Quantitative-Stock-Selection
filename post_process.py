@@ -35,6 +35,12 @@ with suppress(ImportError):
     import yfinance as yf
 
 # --------------------------------------------------------------------------- #
+# configuration
+# --------------------------------------------------------------------------- #
+# Toggle verbose debug logging.  True → DEBUG level, False → INFO level.
+REBALANCE_DEBUG = False
+
+ # --------------------------------------------------------------------------- #
 # logging
 # --------------------------------------------------------------------------- #
 _LOGGER = logging.getLogger(__name__)
@@ -47,7 +53,10 @@ if not _LOGGER.handlers:
     handler.setFormatter(fmt)
     _LOGGER.addHandler(handler)
     _LOGGER.setLevel(logging.INFO)
-
+    # Enable verbose debugging based on the global flag above
+    if REBALANCE_DEBUG:
+        _LOGGER.setLevel(logging.DEBUG)
+        _LOGGER.debug("Debug logging enabled (REBALANCE_DEBUG=True)")
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -102,6 +111,54 @@ def _get_latest_price(conn: sqlite3.Connection, ticker: str) -> float | None:
     except Exception:
         pass
 
+    # 2b) alternative consolidated tables (e.g. "stock_data", "stocks", "prices")
+    for alt_table in ("stock_data", "stocks", "prices", "sp500_prices"):
+        try:
+            cols = (
+                pd.read_sql(f"PRAGMA table_info('{alt_table}')", conn)["name"]
+                .str.lower()
+                .tolist()
+            )
+            _LOGGER.debug("Alt table %s columns: %s", alt_table, cols)
+            # identify possible ticker column
+            for cand in ("ticker", "symbol", "code", "stock", "secid"):
+                if cand in cols:
+                    ticker_col = cand
+                    break
+            else:
+                continue  # no suitable ticker column
+            # identify possible date column (for ordering)
+            for cand in ("date", "trade_date", "datetime", "day"):
+                if cand in cols:
+                    date_col = cand
+                    break
+            else:
+                date_col = None  # order by ROWID fallback
+
+            # build query
+            order_clause = f"ORDER BY {date_col} DESC" if date_col else "ORDER BY ROWID DESC"
+            sql = f"SELECT * FROM '{alt_table}' WHERE {ticker_col} = ? {order_clause} LIMIT 1"
+            df = pd.read_sql(sql, conn, params=(ticker,))
+            _LOGGER.debug(
+                "Alt table %s query returned %d rows for %s",
+                alt_table,
+                len(df),
+                ticker,
+            )
+            if not df.empty:
+                price = _extract_close(df)
+                if price is not None:
+                    _LOGGER.debug(
+                        "Using price %.4f for %s from alt table %s",
+                        price,
+                        ticker,
+                        alt_table,
+                    )
+                    return price
+        except Exception:
+            _LOGGER.debug("Query against alt table %s failed for %s", alt_table, ticker, exc_info=True)
+            pass
+
     # 3) fallback to yfinance
     if "yf" in globals():
         try:
@@ -109,10 +166,13 @@ def _get_latest_price(conn: sqlite3.Connection, ticker: str) -> float | None:
             end = datetime.datetime.now().date()
             start = end - datetime.timedelta(days=7)
             hist = ticker_obj.history(start=start.isoformat(), end=end.isoformat())
+            _LOGGER.debug("yfinance history shape for %s: %s", ticker, hist.shape)
             if not hist.empty:
                 return float(hist["Close"].iloc[-1])
+            else:
+                _LOGGER.debug("yfinance returned empty dataframe for %s", ticker)
         except Exception:
-            pass
+            _LOGGER.debug("yfinance raised exception for %s", ticker, exc_info=True)
 
     _LOGGER.warning("Could not find latest price for %s", ticker)
     return None
@@ -194,7 +254,9 @@ def rebalance_portfolio(
         HTML report <title> and <h1> text (default "Portfolio Rebalance Report").
     """
     holdings_path = Path(holdings_xlsx_path)
-    db_path = Path(price_db_path)
+    db_path = Path(price_db_path).expanduser().resolve()
+    if not db_path.exists():
+        raise FileNotFoundError(f"Price DB not found: {db_path}")
     adj_path = Path(adjustment_txt_path)
     out_path = Path(output_html_path)
 
@@ -221,7 +283,16 @@ def rebalance_portfolio(
     # 2) Fetch latest prices & position values
     # ------------------------------------------------------------------ #
     _LOGGER.info("Querying latest prices from %s", db_path)
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        size_mb = db_path.stat().st_size / 1e6
+        first_tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' LIMIT 10"
+        ).fetchall()
+        _LOGGER.debug(
+            "DB size %.2f MB; first tables: %s",
+            size_mb,
+            [t[0] for t in first_tables],
+        )
         prices = {
             t: _get_latest_price(conn, t) for t in df_equities["Ticker"].unique()
         }
@@ -273,7 +344,7 @@ def rebalance_portfolio(
             "Fetching prices for tickers not in current holdings: %s",
             ", ".join(sorted(extra_tickers)),
         )
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
             for t in extra_tickers:
                 prices[t] = _get_latest_price(conn, t)
 
