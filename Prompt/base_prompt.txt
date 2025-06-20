@@ -6,7 +6,6 @@ Concurrently, a normalized composite fundamental-growth score algorithm has been
 <fundamental_scoring_algorithm_overview>
 
 
-
 Applying these two screening algorithms, we have selected the following stocks, listed as "Ticker: (Trend Score, Fundamental Score, Final Score)":<ticker_list>. To better understand each stock's trend score and fundamental score, you can refer to the overview of how these two scores are calculated.
 
 My current portfolio includes the following holdings, displayed as "Ticker: (Cost Basis, Share Count, Latest price)": <Holdings_list>.
@@ -31,13 +30,13 @@ Examine contemporaneous trends in the S&P 500 and Nasdaq Composite indices withi
 
 
 Step 3 – Portfolio Adjustment and Rationale
-Based on the latest fundamental, sentiment, and technical analyses of both my existing holdings and the screened stock selections—together with the current macroeconomic climate and market conditions as of <end_date>—recommend adjustments to optimize my portfolio.
+Based on the latest fundamental, sentiment, and technical analyses of both my existing holdings and the screened stock selections—together with the current macroeconomic and market conditions as of <end_date>—recommend adjustments to optimize my portfolio.
 Specifically:
 * To help you make a more informed decision, I’ve listed the most recent market prices for each stock in my current portfolio. The format is: ‘Ticker: (Cost Basis, Share Count, Latest Price),’ where the last value indicates the latest available market price.
 * Construct an optimized portfolio by selecting stocks exclusively from the combined set of my current holdings and the screened stocks.
-* The optimized portfolio should hold no more than <maxi_num_stocks> stocks, including cash if justified.
+* The optimized portfolio should hold no more than <maxi_num_stocks> stocks, including cash if justified. 
 * Ensure the total portfolio weights sum to exactly 100%.
-* Given the anticipated holding period of <investment_horizon> days, select positions expected to deliver favorable returns within this timeframe.
+* Given the anticipated holding period of <investment_horizon> days, select positions expected to deliver favorable returns within this timeframe. While the portfolio will be reviewed and rebalanced on a weekly basis, please aim to minimize unnecessary turnover and avoid making substantial allocation changes each week unless clearly justified by significant shifts in market conditions or stock outlook.
 * When optimizing the portfolio, explicitly consider the current market prices, my original cost basis, and the predefined take-profit and stop-loss levels for each existing holding. Carefully evaluate whether the current market price is favorable before selling any stock. Similarly, thoroughly assess if the current market price presents a suitable buying opportunity when adding to existing positions or initiating new ones.
 
 
@@ -57,13 +56,13 @@ The exit strategy should be informed by recent price levels, key technical suppo
 
 step 4 - Present your recommended stock and cash positions separately using both table and text formats:
 - Table Format:
-Clearly indicate the allocation percentage for each recommended stock. Additionally, include explicitly defined stop-loss and take-profit strategies, both expressed as percentages relative to the entry price. These strategies should be informed by recent price volatility, as well as key technical support and resistance levels.
+Clearly indicate the allocation percentage for each recommended stock. Additionally, include explicitly defined stop-loss and take-profit strategies, both expressed as percentages relative to the entry price. 
 
 
 - Text Format:
 Provide a concise and clear presentation of each recommendation in a single line, using the following structure:
 Ticker:Weight(e.g., AAPL:15%)
-This format specifies the position size as a percentage of total capital, along with the number of shares currently held or to be transacted.
+This format specifies the position size as a percentage of total capital.
 
 
 Requirements:
@@ -71,4 +70,4 @@ Requirements:
 You must fully complete all the specified analysis steps. Ensure that your investment recommendations align accurately with market dynamics and conditions as of `<end_date>`, aiming to enhance overall portfolio performance.
 
 
-Finally, prepare your complete and structured analysis report in Chinese, ensuring it is logically organized, clearly articulated, and readily actionable for investment decision-making purposes.
+Finally, prepare your complete and structured analysis report in English, ensuring it is logically organized, clearly articulated, and readily actionable for investment decision-making purposes.
