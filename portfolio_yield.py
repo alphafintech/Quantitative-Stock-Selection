@@ -63,14 +63,14 @@ def compute_and_plot_yield(
     plt.rcParams["axes.unicode_minus"] = False
     plt.figure(figsize=(10, 6))
 
-    plt.plot(df["Date"], df["S&P500累计收益率"], label="S&P500累计收益率",
+    plt.plot(df["Date"], df["S&P500累计收益率"], label="S&P500",
              marker="o", color="#4B9CD3", linewidth=3, linestyle="--")
-    plt.plot(df["Date"], df["ChatGPT累计收益率"], label="ChatGPT累计收益率",
+    plt.plot(df["Date"], df["ChatGPT累计收益率"], label="ChatGPT",
              marker="o", color="#90EE90", linewidth=3)
-    plt.plot(df["Date"], df["Gemini累计收益率"], label="Gemini累计收益率",
+    plt.plot(df["Date"], df["Gemini累计收益率"], label="Gemini",
              marker="o", color="#FF9999", linewidth=3)
 
-    plt.ylabel("累计收益率 (%)", fontsize=18)
+    plt.ylabel("Cumulative Return (%)", fontsize=18)
     plt.xticks(df["Date"], rotation=45, fontsize=16)
     plt.yticks(fontsize=16)
     plt.legend(fontsize=16)

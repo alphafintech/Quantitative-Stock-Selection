@@ -37,6 +37,7 @@ import yahoo_downloader
 import sqlite3
 import re
 import html
+from datetime import datetime, timedelta
 
 # --- 配置日志记录 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MainRunner] %(message)s')
@@ -718,14 +719,10 @@ def _get_normalized_fund_scores(cfg: configparser.ConfigParser,
     """
     token = cfg["FILES"].get(
         "fundamental_scores_file_Gemini",
-        "Gemini/results/sp500_fundamental_scores.xlsx",
+        "sp500_fundamental_scores.xlsx",
     )
-    path = Path(token)
-    if not path.is_absolute():
-        if path.parts and path.parts[0] == "Gemini":
-            path = script_dir / path
-        else:
-            path = script_dir / "Gemini" / "results" / path
+    # Always resolve to script_dir / "Gemini" / "results" / <filename>
+    path = script_dir / "Gemini" / "results" / Path(token).name
 
     if not path.exists():
         logging.warning(f"[to_html] Fundamental score file not found: {path}")
@@ -808,170 +805,258 @@ def _build_norm_map(excel_path: Path,
 # ------------------------------------------------------------
 # Export Gemini screened_stocks Excel to a single‑page HTML
 # ------------------------------------------------------------
-def export_gemini_screened_to_html() -> Path | None:
-    """
-    Convert the Excel specified by
-    [FILES] screened_stocks_file_Gemini
-    (default: Gemini/results/screened_stocks.xlsx)
-    into a standalone HTML file under Output/.
 
-    Returns
-    -------
-    Path | None
-        Path to the generated HTML, or None if failed.
+def read_gemini_results():
+    """
+    读取 Gemini 相关结果文件（均在 script_dir / "Gemini" / "results" /）:
+      - sp500_fundamental_scores.xlsx
+      - sp500_trend_scores_Gemini.xlsx
+      - screened_stocks.xlsx
+    返回 dict: {'fundamental': df1, 'trend': df2, 'screened': df3}
     """
     script_dir = Path(__file__).resolve().parent
-    cfg_path   = script_dir / "config.ini"
-    if not cfg_path.exists():
-        logging.error("[to_html] config.ini not found.")
-        return None
+    results_dir = script_dir / "Gemini" / "results"
 
-    cfg = configparser.ConfigParser()
-    cfg.read(cfg_path, encoding="utf-8")
+    fund_path = results_dir / "sp500_fundamental_scores.xlsx"
+    trend_path = results_dir / "sp500_trend_scores_Gemini.xlsx"
+    screened_path = results_dir / "screened_stocks.xlsx"
 
+    dfs = {}
     try:
-        excel_token = cfg["FILES"]["screened_stocks_file_Gemini"]
-    except KeyError:
-        logging.error("[to_html] screened_stocks_file_Gemini not configured.")
-        return None
-
-    excel_path = Path(excel_token)
-    if not excel_path.is_absolute():
-        # replicate resolve logic from generate_prompt_Gemini
-        if excel_path.parts and excel_path.parts[0] == "Gemini":
-            excel_path = script_dir / excel_path
-        else:
-            excel_path = script_dir / "Gemini" / "results" / excel_path
-
-    if not excel_path.exists():
-        logging.error(f"[to_html] Excel not found: {excel_path}")
-        return None
-
-    # read all sheets
-    try:
-        sheets = pd.read_excel(excel_path, sheet_name=None)
-    except Exception as e:
-        logging.error(f"[to_html] Failed reading Excel: {e}")
-        return None
-
-    # ---- Dynamic row-split for Dual_Threshold_Filter colouring ----
-    # (dual_half calculation is now unused, but retained for legacy; safe to remove if not used elsewhere)
-
-    # --- Load normalized fundamental scores ---
-    norm_map = _get_normalized_fund_scores(cfg, script_dir)
-
-    # --- Weights for combined score ---
-    if cfg.has_section("WEIGHTS"):
-        w_trend = float(cfg["WEIGHTS"].get("trend_weight", "0.6"))
-        w_fund  = float(cfg["WEIGHTS"].get("fund_weight",  "0.4"))
-    else:
-        logging.debug("[to_html] WEIGHTS section missing; defaulting to 0.5 / 0.5")
-        w_trend, w_fund = 0.6, 0.4
-    if (w_trend + w_fund) == 0:
-        w_trend = w_fund = 0.5
-
-    # build simple HTML page
-    html_parts = [
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-        "<title>Gemini Screened Stocks</title>",
-        f"<style>"
-        "body{font-family:Arial,Helvetica,sans-serif;padding:20px;}"
-        "h2{margin-top:40px;}"
-        "table{border-collapse:collapse;table-layout:fixed;width:auto;margin:0 auto;border:none;}"
-        "td,th{padding:2px 4px;text-align:center;"
-        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:90px;max-width:90px;}"
-        "td:nth-child(1),th:nth-child(1){width:50px;max-width:50px;}"
-        "th{text-align:center;font-weight:bold;border-bottom:2px solid #97d197;background:none;}"
-        "tbody tr:nth-child(-n+10) td{background:#eaf4ff;}"   # light blue for top 10
-        "tbody tr:nth-child(n+11)  td{background:#e8ffea;}"   # light green for others
-        "td:nth-child(2),td:nth-child(5){font-weight:bold;}"
-        "</style></head><body>",
-        "<h1>Gemini Screened Stocks</h1>"
-    ]
-    for sheet_name, df in sheets.items():
-        # Skip Combined_Weighted_Score sheet as per latest requirement
-        if sheet_name.strip().lower() == "combined_weighted_score":
-            continue
-        # --- For Combined_Weighted_Score: keep top‑50 by 综合得分 ---
-        if sheet_name.strip().lower() == "combined_weighted_score":
-            # identify combined_score column case‑insensitively
-            try:
-                col_cb = next(c for c in df.columns
-                              if c.lower().replace("_", "") == "combinedscore")
-            except StopIteration:
-                logging.warning("[to_html] Combined_Weighted_Score sheet missing Combined_Score col.")
-            else:
-                df = (df.sort_values(by=col_cb, ascending=False, na_position="last")
-                        .head(50))
-
-        # --- Update Dual_Threshold_Filter with normalized fundamental scores ---
-        if sheet_name.strip().lower() == "dual_threshold_filter":
-            def _res(df, hint):
+        dfs['fundamental'] = pd.read_excel(fund_path)
+        # --- 归一化 Overall_Score 到 0-100 ---
+        if dfs['fundamental'] is not None and not dfs['fundamental'].empty:
+            # 查找 overall_score 列名（忽略大小写和下划线）
+            def _res_col(df, hint):
                 for c in df.columns:
                     if c.lower().replace("_", "") == hint.lower().replace("_", ""):
                         return c
-                return None  # return None if not found
+                raise KeyError(f"Column '{hint}' not found.")
+            try:
+                col_ovrl = _res_col(dfs['fundamental'], "overall_score")
+                # 先去除 NA
+                valid_scores = dfs['fundamental'][col_ovrl].dropna()
+                mn = 0
+                mx = valid_scores.max()
+                if mx == mn:
+                    dfs['fundamental']["normalized_overall_score"] = 50
+                else:
+                    # 只对非 NA 行归一化，NA 保持为 NA
+                    dfs['fundamental']["normalized_overall_score"] = (
+                        (dfs['fundamental'][col_ovrl] - mn) / (mx - mn) * 100
+                    ).round(0).astype("Int64")
+            except Exception as e:
+                logging.warning(f"[read_gemini_results] Fundamental normalization failed: {e}")
+    except Exception as e:
+        logging.warning(f"[read_gemini_results] Failed to read {fund_path.name}: {e}")
+        dfs['fundamental'] = None
 
-            col_tic = _res(df, "ticker")
-            col_fu  = _res(df, "fundamental_score")
-            col_tr  = _res(df, "trend_score")
-            col_cb  = _res(df, "combined_score") or "Combined_Score"
+    try:
+        dfs['trend'] = pd.read_excel(trend_path)
+    except Exception as e:
+        logging.warning(f"[read_gemini_results] Failed to read {trend_path.name}: {e}")
+        dfs['trend'] = None
 
-            if col_tic is None or col_fu is None or col_tr is None:
-                logging.warning("[to_html] Dual_Threshold_Filter sheet missing essential columns.")
-            else:
-                # ensure Fundamental_Score column exists
-                if col_fu not in df.columns:
-                    df[col_fu] = np.nan
+    try:
+        dfs['screened'] = pd.read_excel(screened_path, sheet_name="Dual_Threshold_Filter")
+    except Exception as e:
+        logging.warning(f"[read_gemini_results] Failed to read {screened_path.name}: {e}")
+        dfs['screened'] = None
 
-                df.loc[:, col_fu] = (
-                    df[col_tic].astype(str).str.upper().map(norm_map).fillna(df[col_fu])
-                )
+    # 不再对 fundamental/trend 做归一化
+    # 只做筛选表的合并与加权
+    if dfs.get('screened') is not None and dfs.get('trend') is not None and dfs.get('fundamental') is not None:
+        df_screened = dfs['screened']
+        df_trend = dfs['trend']
+        df_fund = dfs['fundamental']
 
-                # compute Combined_Score column even if it did not exist
-                df.loc[:, col_cb] = (
-                    w_trend * pd.to_numeric(df[col_tr], errors="coerce") +
-                    w_fund  * pd.to_numeric(df[col_fu], errors="coerce")
-                ).round(0)
-            # --- sort Dual_Threshold_Filter by combined score descending ---
-            if sheet_name.strip().lower() == "dual_threshold_filter":
-                try:
-                    _col_cb = next(c for c in df.columns
-                                   if c.lower().replace("_", "") == "combinedscore")
-                    df = df.sort_values(by=_col_cb, ascending=False, na_position="last")
-                except StopIteration:
-                    logging.warning("[to_html] Dual_Threshold_Filter sheet missing Combined_Score col for sorting.")
+        # Resolve column names
+        def _res_col(df, hint):
+            for c in df.columns:
+                if c.lower().replace("_", "") == hint.lower().replace("_", ""):
+                    return c
+            raise KeyError(f"Column '{hint}' not found.")
 
-        # --- inject normalized fundamental score & recompute combined ---
-        # (skipped for combined_weighted_score due to early continue)
-        # --- Rename selected columns to Chinese ---
-        rename_map = {
-            "Ticker": "股票代码",
-            "Trend_Score": "趋势得分",
-            "Fundamental_Score": "基本面得分",
-            "Combined_Score": "综合得分",
-        }
-        df = df.rename(columns=rename_map)
+        col_tic_screened = _res_col(df_screened, "ticker")
+        col_tic_trend = _res_col(df_trend, "ticker")
+        col_trend_score = _res_col(df_trend, "normalized_trend_score")
+        col_tic_fund = _res_col(df_fund, "ticker")
+        col_fund_score = _res_col(df_fund, "normalized_overall_score")
 
-        # --- Add row number column ---
-        df.insert(0, "序号", range(1, len(df) + 1))
-        # --- Drop percentile columns if present ---
-        drop_cols = [c for c in df.columns
-                     if c.lower() in ("trend_percentile", "fundamental_percentile")]
-        df = df.drop(columns=drop_cols, errors="ignore")
+        # Merge scores into screened
+        df_screened = df_screened.copy()
+        df_screened["Ticker_upper"] = df_screened[col_tic_screened].astype(str).str.upper()
+        trend_map = dict(zip(df_trend[col_tic_trend].astype(str).str.upper(), df_trend[col_trend_score]))
+        fund_map = dict(zip(df_fund[col_tic_fund].astype(str).str.upper(), df_fund[col_fund_score]))
 
-        # --- Round numeric columns to nearest integer for display ---
-        numeric_cols = df.select_dtypes(include=["number"]).columns
-        df[numeric_cols] = df[numeric_cols].round(0).astype("Int64")
+        df_screened["Trend Score"] = df_screened["Ticker_upper"].map(trend_map)
+        df_screened["Fundamental Score"] = df_screened["Ticker_upper"].map(fund_map)
 
-        html_parts.append(f"<h2>{html.escape(sheet_name)}</h2>")
-        html_parts.append(df.to_html(index=False, border=0, classes="data-table"))
-    html_parts.append("</body></html>")
-    full_html = "\n".join(html_parts)
+        # Calculate weighted sum (e.g., 0.5 * trend + 0.5 * fundamental)
+        wt, wf = 0.6, 0.4
+        s = wt + wf or 1
+        wt, wf = wt/s, wf/s
+        df_screened["Combined Score"] = (
+            wt * pd.to_numeric(df_screened["Trend Score"], errors="coerce") +
+            wf * pd.to_numeric(df_screened["Fundamental Score"], errors="coerce")
+        ).round(2)
 
+        # Drop helper column
+        df_screened.drop(columns=["Ticker_upper"], inplace=True)
+        # Sort by Combined Score descending
+        df_screened = df_screened.sort_values(by="Combined Score", ascending=False, na_position="last")
+        df_screened.reset_index(drop=True, inplace=True)
+        df_screened.index = df_screened.index + 1  # 1-based index
+        df_screened = df_screened.loc[:, ["Ticker", "Trend Score", "Fundamental Score", "Combined Score"]]
+        # round scores to 0 decimal places and convert to Int64
+        df_screened["Trend Score"] = df_screened["Trend Score"].round(0).astype("Int64")
+        df_screened["Fundamental Score"] = df_screened["Fundamental Score"].round(0).astype("Int64")
+        df_screened["Combined Score"] = df_screened["Combined Score"].round(0).astype("Int64")
+
+
+    return df_screened
+
+def read_gpt_results():
+    """
+    读取 GPT 相关结果文件（均在 script_dir / "GPT" / "results" /）:
+      - composite_selection.xlsx
+      - fundamental_scores.xlsx
+      - trend_scores.xlsx
+    返回 DataFrame，含 Ticker, Trend Score, Fundamental Score, Combined Score（均已归一化0-100）。
+    """
+    script_dir = Path(__file__).resolve().parent
+    results_dir = script_dir / "GPT" / "results"
+
+    comp_path = results_dir / "composite_selection.xlsx"
+    fund_path = results_dir / "fundamental_scores.xlsx"
+    trend_path = results_dir / "trend_scores.xlsx"
+
+    try:
+        df_comp = pd.read_excel(comp_path)
+        df_fund = pd.read_excel(fund_path)
+        df_trend = pd.read_excel(trend_path)
+    except Exception as e:
+        logging.warning(f"[read_gpt_results] Failed to read one or more GPT files: {e}")
+        return None
+
+    # Helper to resolve column names
+    def _res_col(df, hint):
+        for c in df.columns:
+            if c.lower().replace("_", "") == hint.lower().replace("_", ""):
+                return c
+        raise KeyError(f"Column '{hint}' not found.")
+
+    try:
+        col_tic_comp = _res_col(df_comp, "ticker")
+        col_tic_fund = _res_col(df_fund, "ticker")
+        col_tic_trend = _res_col(df_trend, "ticker")
+        col_score_fund = _res_col(df_fund, "total_score")
+        col_score_trend = _res_col(df_trend, "total_score")
+    except Exception as e:
+        logging.warning(f"[read_gpt_results] Column resolution failed: {e}")
+        return None
+
+    # 归一化分数
+    def _normalize(df, col):
+        valid = df[col].dropna()
+        mn, mx = valid.min(), valid.max()
+        if mx == mn:
+            return pd.Series([50]*len(df), index=df.index, dtype="Int64")
+        normed = ((df[col] - mn) / (mx - mn) * 100).round(0)
+        normed[df[col].isna()] = pd.NA
+        return normed.astype("Int64")
+
+    df_fund["normalized_fund_score"] = _normalize(df_fund, col_score_fund)
+    df_trend["normalized_trend_score"] = _normalize(df_trend, col_score_trend)
+
+    # 构建映射
+    fund_map = dict(zip(df_fund[col_tic_fund].astype(str).str.upper(), df_fund["normalized_fund_score"]))
+    trend_map = dict(zip(df_trend[col_tic_trend].astype(str).str.upper(), df_trend["normalized_trend_score"]))
+
+    # 合并分数到 composite_selection
+    df_comp = df_comp.copy()
+    df_comp["Ticker_upper"] = df_comp[col_tic_comp].astype(str).str.upper()
+    df_comp["Trend Score"] = df_comp["Ticker_upper"].map(trend_map)
+    df_comp["Fundamental Score"] = df_comp["Ticker_upper"].map(fund_map)
+
+    # 计算加权总分（默认0.6:0.4，可根据需要调整）
+    wt, wf = 0.6, 0.4
+    s = wt + wf or 1
+    wt, wf = wt/s, wf/s
+    df_comp["Combined Score"] = (
+        wt * pd.to_numeric(df_comp["Trend Score"], errors="coerce") +
+        wf * pd.to_numeric(df_comp["Fundamental Score"], errors="coerce")
+    ).round(0).astype("Int64")
+
+    # 整理输出
+    df_comp = df_comp.loc[:, [col_tic_comp, "Trend Score", "Fundamental Score", "Combined Score"]]
+    df_comp = df_comp.rename(columns={col_tic_comp: "Ticker"})
+    df_comp = df_comp.sort_values(by="Combined Score", ascending=False, na_position="last")
+    df_comp.reset_index(drop=True, inplace=True)
+    df_comp.index = df_comp.index + 1  # 1-based index
+
+    return df_comp
+
+def export_screened_to_html(model = "gemini") -> Path | None:
+    """
+    将 Gemini 筛选结果 Excel 输出为美观的 HTML。
+    """
+    if model.lower() == "gpt":
+        df = read_gpt_results()
+    elif model.lower() == "gemini":
+        df = read_gemini_results()
+
+    if df is None or df.empty:
+        logging.error("[to_html] No screened data to export.")
+        return None
+
+    # 行样式：综合评分>=80为蓝色，否则绿色
+    def highlight_rows(s):
+        if s['Combined Score'] < 80:
+            return ['background-color: #E2EFD8' for _ in s]
+        else:
+            return ['background-color: #DEEBF7' for _ in s]
+
+    # 列加粗
+    def bold_columns(col):
+        if col.name in ['Ticker', 'Combined Score']:
+            return ['font-weight: bold' for _ in col]
+        return ['font-weight: normal' for _ in col]
+
+    # 格式化
+    styled_df = df.style.apply(highlight_rows, axis=1)\
+        .apply(bold_columns, axis=0)\
+        .format({
+            'Trend Score': "{:.0f}",
+            'Fundamental Score': "{:.0f}",
+            'Combined Score': "{:.0f}"
+        })\
+        .set_properties(**{'text-align': 'center'})\
+        .set_table_styles([{
+            'selector': 'th',
+            'props': [('font-weight', 'bold'), ('text-align', 'center')]
+        }])
+
+    html_table = styled_df.to_html(index=False)
+
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    if model.lower() == "gemini":
+        table_title = f"<div style='text-align: center;'><h2>Gemini Screened Results - {yesterday.strftime('%Y.%m.%d')}  </h2></div>"
+    elif model.lower() == "gpt":
+        table_title = f"<div style='text-align: center;'><h2>GPT Screened Results - {yesterday.strftime('%Y.%m.%d')}  </h2></div>"
+    full_html = f"{table_title}\n<div style='display: table; margin: 0 auto;'>{html_table}</div>"
+
+    script_dir = Path(__file__).resolve().parent
+    cfg = configparser.ConfigParser()
+    cfg.read(script_dir / "config.ini", encoding="utf-8")
     out_dir = script_dir / cfg["FILES"].get("output_dir", "Output")
     out_dir.mkdir(parents=True, exist_ok=True)
-    html_path = out_dir / "screened_stocks_Gemini.html"
+
+    if model.lower() == "gemini":
+        html_path = out_dir / "screened_stocks_Gemini.html"
+    elif model.lower() == "gpt":
+        html_path = out_dir / "screened_stocks_GPT.html"
     try:
         html_path.write_text(full_html, encoding="utf-8")
         logging.info(f"[to_html] Exported → {html_path}")
@@ -980,113 +1065,7 @@ def export_gemini_screened_to_html() -> Path | None:
         logging.error(f"[to_html] Failed writing HTML: {e}")
         return None
 
-# ------------------------------------------------------------
-# Export GPT screened_stocks (composite_selection.xlsx) to HTML
-# ------------------------------------------------------------
-def export_gpt_screened_to_html() -> Path | None:
-    """
-    Convert GPT composite_selection.xlsx to HTML (style identical to Gemini).
-    trend_score & fund_score are normalized via GPT/results/trend_scores.xlsx
-    and GPT/results/fundamental_scores.xlsx. growth_sub column is omitted.
-    """
-    sd = Path(__file__).resolve().parent
-    cfg = configparser.ConfigParser()
-    cfg.read(sd / "config.ini", encoding="utf-8")
 
-    comp_token = cfg["FILES"].get("screened_stocks_file_GPT",
-                                  "GPT/results/composite_selection.xlsx")
-    comp_path = Path(comp_token) if Path(comp_token).is_absolute() else sd / comp_token
-    if not comp_path.exists():
-        logging.error(f"[to_html] GPT composite Excel missing: {comp_path}")
-        return None
-
-    try:
-        df = pd.read_excel(comp_path)
-    except Exception as e:
-        logging.error(f"[to_html] Failed reading composite Excel: {e}")
-        return None
-
-    def _res(df: pd.DataFrame, hint: str):
-        for c in df.columns:
-            if c.lower().replace("_", "") == hint.lower().replace("_", ""):
-                return c
-        raise KeyError
-
-    try:
-        col_tic = _res(df, "ticker")
-        col_tr  = _res(df, "trend_score")
-        col_fu  = _res(df, "fund_score")
-        col_cb  = _res(df, "final_score")
-    except KeyError as ke:
-        logging.error(f"[to_html] composite Excel missing column: {ke}")
-        return None
-
-    # Normalise using source files' original score columns
-    trend_map = _build_norm_map(sd / "GPT/results/trend_scores.xlsx", "TotalScore")
-    fund_map  = _build_norm_map(sd / "GPT/results/fundamental_scores.xlsx", "total_score")
-
-    df.loc[:, col_tr] = df[col_tic].astype(str).str.upper().map(trend_map).fillna(df[col_tr])
-    df.loc[:, col_fu] = df[col_tic].astype(str).str.upper().map(fund_map).fillna(df[col_fu])
-
-    # Recompute combined score
-    if cfg.has_section("WEIGHTS"):
-        wt = float(cfg["WEIGHTS"].get("trend_weight", "0.6"))
-        wf = float(cfg["WEIGHTS"].get("fund_weight",  "0.4"))
-    else:
-        wt, wf = 0.6, 0.4
-    s = wt + wf or 1
-    wt, wf = wt/s, wf/s
-    df.loc[:, col_cb] = (
-        wt * pd.to_numeric(df[col_tr], errors="coerce") +
-        wf * pd.to_numeric(df[col_fu], errors="coerce")
-    ).round(0)
-
-    # Drop growth_sub if present
-    drop_cols = [c for c in df.columns if c.lower().replace("_","") == "growthsub"]
-    if drop_cols:
-        df.drop(columns=drop_cols, inplace=True)
-
-    # Sort & top‑50
-    df = df.sort_values(by=col_cb, ascending=False, na_position="last").head(50)
-
-    # Rename & add row number
-    rename = {"ticker":"股票代码", "trend_score":"趋势得分",
-              "fund_score":"基本面得分", "final_score":"综合得分"}
-    df = df.rename(columns=rename)
-    df.insert(0, "序号", range(1, len(df)+1))
-    num_cols = df.select_dtypes("number").columns
-    df[num_cols] = df[num_cols].round(0).astype("Int64")
-
-    # Build HTML
-    style = (
-        "body{font-family:Arial,Helvetica,sans-serif;padding:20px;}"
-        "table{border-collapse:collapse;table-layout:fixed;width:auto;margin:0 auto;border:none;}"
-        "td,th{padding:2px 4px;text-align:center;"
-        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:90px;max-width:90px;}"
-        "td:nth-child(1),th:nth-child(1){width:50px;max-width:50px;}"
-        "th{text-align:center;font-weight:bold;border-bottom:2px solid #97d197;background:none;}"
-        "tbody tr:nth-child(-n+10) td{background:#eaf4ff;}"
-        "tbody tr:nth-child(n+11)  td{background:#e8ffea;}"
-        "td:nth-child(2),td:nth-child(5){font-weight:bold;}"
-    )
-    html_str = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        "<title>GPT Screened Stocks</title>"
-        f"<style>{style}</style></head><body>"
-        "<h1>GPT Screened Stocks</h1>"
-        f"{df.to_html(index=False, border=0)}"
-        "</body></html>"
-    )
-    out_dir = sd / cfg["FILES"].get("output_dir", "Output")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "screened_stocks_GPT.html"
-    try:
-        out_path.write_text(html_str, encoding="utf-8")
-        logging.info(f"[to_html] GPT Exported → {out_path}")
-        return out_path
-    except Exception as e:
-        logging.error(f"[to_html] Failed writing GPT HTML: {e}")
-        return None
 
 def test_main_process():
     """
@@ -1126,11 +1105,13 @@ if __name__ == "__main__":
     overall_start_time = time.time()
     run_main_process()  # 调用封装好的主流程函数
     #test_main_process()
-    export_gemini_screened_to_html()
-    export_gpt_screened_to_html()
+    export_screened_to_html("gemini")  # 默认导出 Gemini 结果
+    export_screened_to_html("gpt")
     generate_prompt_Gemini()
     generate_prompt_GPT()
     overall_end_time = time.time()
     overall_duration = overall_end_time - overall_start_time
     logging.info(f"--- 脚本总执行时间: {overall_duration:.2f} 秒 ---")
     sys.exit(0) # 脚本正常结束
+
+
