@@ -66,19 +66,19 @@ GEMINI_AVAILABLE = False # not available by default
 try:
     # 优先尝试从 Gemini 子目录导入
     from Gemini.run_sp500_processing import main_pipeline as gemini_main_pipeline
-    logging.info("成功从 Gemini 子目录导入 gemini_main_pipeline 函数。")
+    logging.info("Successfully imported gemini_main_pipeline from Gemini subdirectory.")
     GEMINI_AVAILABLE = True
 except ImportError as e:
-    logging.warning(f"无法从 'Gemini.run_sp500_processing' 导入 gemini_main_pipeline: {e}")
+    logging.warning(f"Failed to import gemini_main_pipeline from 'Gemini.run_sp500_processing': {e}")
     # 备选：尝试直接导入
     try:
         from Gemini.run_sp500_processing import main_pipeline as gemini_main_pipeline
-        logging.info("成功直接导入 gemini_main_pipeline 函数。")
+        logging.info("Successfully imported gemini_main_pipeline directly.")
         GEMINI_AVAILABLE = True
     except ImportError:
-        logging.warning("直接导入 gemini_main_pipeline 也失败。Gemini 流程将不可用。")
+        logging.warning("Direct import of gemini_main_pipeline also failed. Gemini pipeline will be unavailable.")
 except Exception as import_err:
-    logging.error(f"导入 gemini_main_pipeline 时发生意外错误: {import_err}", exc_info=True)
+    logging.error(f"Unexpected error when importing gemini_main_pipeline: {import_err}", exc_info=True)
     GEMINI_AVAILABLE = False
 
 # --- 导入 GPT 处理流程 ---
@@ -89,19 +89,19 @@ try:
     # 优先尝试从 GPT 子目录导入
     # **重要**: 假设 run_complete_process.py 在名为 'GPT' 的子目录中
     from GPT.run_complete_process import run_pipeline as gpt_run_pipeline
-    logging.info("成功从 GPT 子目录导入 gpt_run_pipeline 函数。")
+    logging.info("Successfully imported gpt_run_pipeline from GPT subdirectory.")
     GPT_AVAILABLE = True
 except ImportError as e:
-    logging.warning(f"无法从 'GPT.run_complete_process' 导入 gpt_run_pipeline: {e}")
+    logging.warning(f"Failed to import gpt_run_pipeline from 'GPT.run_complete_process': {e}")
     # 备选：尝试直接导入
     try:
         from GPT.run_complete_process import run_pipeline as gpt_run_pipeline
-        logging.info("成功直接导入 gpt_run_pipeline 函数。")
+        logging.info("Successfully imported gpt_run_pipeline directly.")
         GPT_AVAILABLE = True
     except ImportError:
-        logging.warning("直接导入 gpt_run_pipeline 也失败。GPT 流程将不可用。")
+        logging.warning("Direct import of gpt_run_pipeline also failed. GPT pipeline will be unavailable.")
 except Exception as import_err:
-    logging.error(f"导入 gpt_run_pipeline 时发生意外错误: {import_err}", exc_info=True)
+    logging.error(f"Unexpected error when importing gpt_run_pipeline: {import_err}", exc_info=True)
     GPT_AVAILABLE = False
 
 #change_working_directory() # 切换回主目录
@@ -146,11 +146,11 @@ def run_main_process():
     config_path = Path(__file__).resolve().parent / "config.ini"
 
     if not args.skip_update_price_data:
-        logging.info("--- 下载/更新股价数据 ---")
+        logging.info("--- Downloading/updating price data ---")
         yahoo_downloader.download_price_data(config_file=str(config_path))
 
     if not args.skip_update_finance_data:
-        logging.info("--- 下载/更新财务数据 ---")
+        logging.info("--- Downloading/updating financial data ---")
         yahoo_downloader.acquire_raw_financial_data_to_staging(
             config_file=str(config_path)
         )
@@ -158,24 +158,24 @@ def run_main_process():
 
     # --- 执行 Gemini 流程 (如果可用且未被跳过) ---
     if GEMINI_AVAILABLE and not args.skip_Gemini_pipeline:
-        logging.info("--- 开始执行主流程 (Gemini) ---")
+        logging.info("--- Starting main pipeline (Gemini) ---")
         start_time_gemini = time.time()
         try:
             change_working_directory(Gemini_dir)
             gemini_main_pipeline(True)
-            logging.info("--- 主流程 (Gemini) 执行完毕 ---")
+            logging.info("--- Main pipeline (Gemini) completed ---")
         except TypeError as te:
-            logging.error(f"调用 gemini_main_pipeline 时发生 TypeError: {te}", exc_info=True)
+            logging.error(f"TypeError when calling gemini_main_pipeline: {te}", exc_info=True)
         except Exception as e:
-            logging.error(f"执行 gemini_main_pipeline 时发生意外错误: {e}", exc_info=True)
+            logging.error(f"Unexpected error while running gemini_main_pipeline: {e}", exc_info=True)
         finally:
             end_time_gemini = time.time()
             duration_gemini = end_time_gemini - start_time_gemini
-            logging.info(f"--- Gemini 流程执行时间: {duration_gemini:.2f} 秒 ---")
+            logging.info(f"--- Gemini pipeline runtime: {duration_gemini:.2f} seconds ---")
     elif args.skip_Gemini_pipeline:
-         logging.info("--- 跳过 Gemini 流程 (根据 --skip-Gemini-pipeline 参数) ---")
+         logging.info("--- Skipping Gemini pipeline (via --skip-Gemini-pipeline) ---")
     elif not GEMINI_AVAILABLE:
-         logging.warning("--- Gemini 流程不可用 (导入失败) ---")
+         logging.warning("--- Gemini pipeline unavailable (import failed) ---")
 
 
     # --- 执行 GPT 流程 (如果可用且未被跳过) ---
@@ -183,9 +183,9 @@ def run_main_process():
         recalc_scores_gpt = True  # 固定为 True
         do_selection_gpt = True  # 固定为 True
 
-        logging.info("--- 开始执行主流程 (GPT) ---")
+        logging.info("--- Starting main pipeline (GPT) ---")
         logging.info(
-            f"GPT 参数: recalc_scores={recalc_scores_gpt}, do_selection={do_selection_gpt}"
+            f"GPT params: recalc_scores={recalc_scores_gpt}, do_selection={do_selection_gpt}"
         )
         start_time_gpt = time.time()
         try:
@@ -195,21 +195,21 @@ def run_main_process():
                 recalc_scores=recalc_scores_gpt,
                 do_selection=do_selection_gpt
             )
-            logging.info("--- 主流程 (GPT) 执行完毕 ---")
+            logging.info("--- Main pipeline (GPT) completed ---")
         except TypeError as te:
-             logging.error(f"调用 gpt_run_pipeline 时发生 TypeError: {te}", exc_info=True)
-             logging.error("请检查 GPT/run_complete_process.py 中 run_pipeline 函数的参数定义。")
+             logging.error(f"TypeError when calling gpt_run_pipeline: {te}", exc_info=True)
+             logging.error("Please check the run_pipeline function definition in GPT/run_complete_process.py.")
         except Exception as e:
-            logging.error(f"执行 gpt_run_pipeline 时发生意外错误: {e}", exc_info=True)
+            logging.error(f"Unexpected error while running gpt_run_pipeline: {e}", exc_info=True)
         finally:
             end_time_gpt = time.time()
             duration_gpt = end_time_gpt - start_time_gpt
-            logging.info(f"--- GPT 流程执行时间: {duration_gpt:.2f} 秒 ---")
+            logging.info(f"--- GPT pipeline runtime: {duration_gpt:.2f} seconds ---")
             change_working_directory()
     elif args.skip_GPT_pipeline and not GPT_AVAILABLE:
-         logging.warning("--- GPT 流程不可用 (导入失败)，但已跳过 GPT ---")
+         logging.warning("--- GPT pipeline unavailable (import failed) but skipped ---")
     elif not GPT_AVAILABLE:
-         logging.warning("--- GPT 流程不可用 (导入失败) ---")
+         logging.warning("--- GPT pipeline unavailable (import failed) ---")
 
 
         
@@ -434,7 +434,7 @@ def generate_prompt_Gemini() -> str:
 
     if not excel_path.exists():
         logging.warning(
-            f"[Gemini Prompt] 筛选结果文件不存在，跳过生成: {excel_path}"
+            f"[Gemini Prompt] Screened result file not found, skipping: {excel_path}"
         )
         return ""
 
@@ -561,7 +561,7 @@ def generate_prompt_Gemini() -> str:
 
     prompt_path = out_dir / prompt_fname
     prompt_path.write_text(final_prompt, encoding="utf-8")
-    logging.info(f"[Gemini Prompt] 已生成并写入 → {prompt_path}")
+    logging.info(f"[Gemini Prompt] generated and written → {prompt_path}")
 
     return final_prompt
 
@@ -702,7 +702,7 @@ def generate_prompt_GPT() -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
     prompt_path = out_dir / prompt_fname
     prompt_path.write_text(final_prompt, encoding="utf-8")
-    logging.info(f"[GPT Prompt] 已生成并写入 → {prompt_path}")
+    logging.info(f"[GPT Prompt] generated and written → {prompt_path}")
 
     return final_prompt
 
@@ -1092,10 +1092,10 @@ def test_main_process():
                 do_selection=True
             )
         else:
-            logging.warning("GPT pipeline 未导入成功，跳过 GPT 测试步骤。")
+            logging.warning("GPT pipeline not imported successfully, skipping GPT test step.")
 
     except Exception as e:
-        logging.error(f"主流程执行时发生错误: {e}", exc_info=True)
+        logging.error(f"Error occurred while executing main process: {e}", exc_info=True)
     finally:
         # 无论成功与否都切回脚本目录
         change_working_directory()
@@ -1112,7 +1112,7 @@ if __name__ == "__main__":
     generate_prompt_GPT()
     overall_end_time = time.time()
     overall_duration = overall_end_time - overall_start_time
-    logging.info(f"--- 脚本总执行时间: {overall_duration:.2f} 秒 ---")
+    logging.info(f"--- Total script runtime: {overall_duration:.2f} seconds ---")
     sys.exit(0) # 脚本正常结束
 
 
