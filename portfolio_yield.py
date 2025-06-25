@@ -45,9 +45,9 @@ def compute_and_plot_yield(
 
     # --------------------- 计算累计收益率 ------------------------
     base = df.iloc[0][["S&P500", "ChatGPT", "Gemini"]]
-    df["S&P500累计收益率"] = (df["S&P500"] / base["S&P500"]) * 100
-    df["ChatGPT累计收益率"] = (df["ChatGPT"] / base["ChatGPT"]) * 100
-    df["Gemini累计收益率"] = (df["Gemini"] / base["Gemini"]) * 100
+    df["S&P500累计收益率"] = (df["S&P500"] / base["S&P500"]) * 100 - 100
+    df["ChatGPT累计收益率"] = (df["ChatGPT"] / base["ChatGPT"]) * 100 - 100
+    df["Gemini累计收益率"] = (df["Gemini"] / base["Gemini"]) * 100 - 100
     df[["S&P500累计收益率", "ChatGPT累计收益率", "Gemini累计收益率"]] = (
         df[["S&P500累计收益率", "ChatGPT累计收益率", "Gemini累计收益率"]].astype(int)
     )
@@ -59,26 +59,46 @@ def compute_and_plot_yield(
     df.to_excel(str(output_excel), sheet_name=sheet_name, index=False)
 
     # -------------------------- 绘图 -----------------------------
+    plt.style.use("seaborn-v0_8-whitegrid")  # 更专业的背景
     plt.rcParams["font.sans-serif"] = ["SimHei"]
     plt.rcParams["axes.unicode_minus"] = False
-    plt.figure(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(12, 7))
 
-    plt.plot(df["Date"], df["S&P500累计收益率"], label="S&P500",
-             marker="o", color="#4B9CD3", linewidth=3, linestyle="--")
-    plt.plot(df["Date"], df["ChatGPT累计收益率"], label="ChatGPT",
-             marker="o", color="#90EE90", linewidth=3)
-    plt.plot(df["Date"], df["Gemini累计收益率"], label="Gemini",
-             marker="o", color="#FF9999", linewidth=3)
+    # 绘制三条曲线，增加平滑线条和阴影
+    ax.plot(df["Date"], df["Gemini累计收益率"], label="Gemini",
+            marker="o", color="#90EE90", linewidth=3, alpha=0.95)
+    ax.plot(df["Date"], df["ChatGPT累计收益率"], label="ChatGPT",
+            marker="s", color="#FF9999", linewidth=3, alpha=0.95, linestyle=":")
+    ax.plot(df["Date"], df["S&P500累计收益率"], label="S&P500",
+            marker="*", color="#4B9CD3", linewidth=3, linestyle="--", alpha=0.95)
 
-    plt.ylabel("Cumulative Return (%)", fontsize=18)
-    plt.xticks(df["Date"], rotation=45, fontsize=16)
-    plt.yticks(fontsize=16)
-    plt.legend(fontsize=16)
-    plt.tight_layout()
+
+    # 填充曲线下方区域，增加视觉层次
+    ax.fill_between(df["Date"], df["S&P500累计收益率"], alpha=0.08, color="#4B9CD3")
+    ax.fill_between(df["Date"], df["ChatGPT累计收益率"], alpha=0.08, color="#FF9999")
+    ax.fill_between(df["Date"], df["Gemini累计收益率"], alpha=0.08, color="#90EE90")
+
+    # 设置标题和标签
+    ax.set_title("Cumulative Return Comparison", fontsize=22, fontweight="bold", pad=18)
+    ax.set_ylabel("Cumulative Return (%)", fontsize=18)
+    ax.set_xlabel("Date", fontsize=18)
+    ax.set_xticks(df["Date"])
+    ax.set_xticklabels(df["Date"], rotation=45, fontsize=15)
+    ax.tick_params(axis='y', labelsize=15)
+    ax.grid(True, which='major', axis='y', linestyle='--', alpha=0.5)
+
+    # 优化图例（去除阴影）
+    ax.legend(fontsize=17, loc="upper left", frameon=True, fancybox=True, borderpad=1)
+
+    # 去除顶部和右侧边框
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    plt.tight_layout(pad=2.0)
 
     if output_png is None:
         output_png = RESULT_DIR / "performance_comparison.png"
-    plt.savefig(str(output_png))
+    plt.savefig(str(output_png), dpi=180, bbox_inches="tight")
     plt.close()
 
     return df
