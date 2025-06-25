@@ -10,46 +10,48 @@ def export_ticker_financials_to_excel(ticker: str,
                                       raw_table: str = "raw_financials",
                                       metrics_table: str = "derived_metrics") -> Path:
     """
-    导出指定 Ticker 在数据库中的所有财报数据到 Excel，并在终端打印三张表。
-    参数
-    ----
-    ticker : str
-        目标股票代码，大小写不敏感（函数内部统一大写比较）
-    cfg_path : str | Path | None
-        config_finance.ini 的路径；默认 None 时自动指向程序根目录 /GPT/config_finance.ini
-    raw_table / metrics_table : str
-        表名，如有自定义可修改
+    Export all financial records for a ticker to Excel and print three tables
+    on the console.
 
-    返回值
-    -----
+    Parameters
+    ----------
+    ticker : str
+        Target ticker symbol (case insensitive, converted to upper case)
+    cfg_path : str | Path | None
+        Path to ``config_finance.ini``. ``None`` defaults to ``/GPT/config_finance.ini``.
+    raw_table / metrics_table : str
+        Table names to query; change if you customized them.
+
+    Returns
+    -------
     Path
-        生成的 Excel 文件路径
+        Path to the generated Excel file.
     """
-    # 将 cfg_path 解析为绝对路径（默认指向程序根目录 /GPT/config_finance.ini）
+    # Resolve cfg_path to an absolute path (defaults to /GPT/config_finance.ini)
     if cfg_path is None:
         cfg_path = Path(__file__).parent / "config_finance.ini"
     else:
         cfg_path = Path(cfg_path)
         if not cfg_path.is_absolute():
             cfg_path = Path(__file__).parent / cfg_path
-    # 读取 db 路径
+    # Read the DB path
     cfg = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
     cfg.read(str(cfg_path), encoding="utf-8")
     db_name = cfg["database"].get("db_name", "SP500_finance_data.db")
     db_path = cfg_path.parent / db_name
 
     if not db_path.exists():
-        raise FileNotFoundError(f"数据库文件不存在: {db_path}")
+        raise FileNotFoundError(f"Database file does not exist: {db_path}")
 
-    # 连接数据库 —— 动态抓取含 ticker 列的所有表
+    # Connect to DB and dynamically read all tables containing a ticker column
     sheet_dfs: Dict[str, pd.DataFrame] = {}
 
     with sqlite3.connect(db_path) as conn:
-        # 找到所有用户表
+        # Find all user tables
         table_names = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", conn)["name"].tolist()
 
         for tbl in table_names:
-            # 只处理包含 ticker 字段的表
+            # Only process tables containing a ticker column
             cols = [row[1] for row in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
             if not any(c.lower() == "ticker" for c in cols):
                 continue
@@ -62,33 +64,33 @@ def export_ticker_financials_to_excel(ticker: str,
                 traceback.print_exc()
                 continue
 
-    # 打印到控制台，便于快速查看
+    # Print to console for a quick look
     if not sheet_dfs:
-        raise ValueError(f"在数据库中未找到 {ticker} 相关数据。")
+        raise ValueError(f"No data for {ticker} found in the database.")
 
     for tbl, df in sheet_dfs.items():
         print(f"\n========== {tbl.upper()} =========")
         print(df.head())
 
-    # 将常见日期列转换为字符串
+    # Convert common date columns to strings
     for df in sheet_dfs.values():
         for col in df.columns:
             if "date" in col.lower():
                 df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    # 输出到 Excel，每张表一个 sheet
+    # Output to Excel, one sheet per table
     out_name = f"{ticker.upper()}_financials.xlsx"
     out_path = Path(__file__).with_name(out_name)
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         for tbl, df in sheet_dfs.items():
-            writer.book.create_sheet(tbl[:31])   # sheet 名最长 31 字符
+            writer.book.create_sheet(tbl[:31])   # sheet name max 31 chars
             df.to_excel(writer, sheet_name=tbl[:31], index=False)
 
-    print(f"[INFO] 已导出到 {out_path.resolve()}")
+    print(f"[INFO] Exported to {out_path.resolve()}")
     return out_path
 
-# ========= 使用示例 =========
+# ========= Example usage =========
 if __name__ == "__main__":
     export_ticker_financials_to_excel("NVDA")
 

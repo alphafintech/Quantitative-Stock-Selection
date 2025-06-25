@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-主执行脚本 (Run_complete_program.py)
+Main entry script ``Run_complete_program.py``.
 
-功能:
-1. 解析命令行参数以控制 S&P 500 处理流程 (Gemini 和/或 GPT 部分)。
-2. 调用 Gemini/run_sp500_processing.py 中的 main_pipeline 函数 (如果需要)。
-3. 调用 GPT/run_complete_process.py 中的 run_pipeline 函数 (如果需要)。
-4. 允许用户选择性地跳过数据更新或筛选步骤。
+Features
+--------
+1. Parse command‑line options to control the S&P 500 workflow (Gemini and/or GPT).
+2. Invoke ``Gemini/run_sp500_processing.py``'s ``main_pipeline`` when needed.
+3. Invoke ``GPT/run_complete_process.py``'s ``run_pipeline`` when needed.
+4. Allow the user to skip data updates or filtering steps.
 
-命令行参数说明:
---skip-update-price-data   跳过 yahoo_downloader.download_price_data()
---skip-update-finance-data 跳过 yahoo_downloader.acquire_raw_financial_data_to_staging()
---skip-Gemini-pipeline     跳过 Gemini 处理流程
---skip-GPT-pipeline        跳过 GPT 处理流程
+Command‑line arguments:
+--skip-update-price-data   Skip ``yahoo_downloader.download_price_data()``
+--skip-update-finance-data Skip ``yahoo_downloader.acquire_raw_financial_data_to_staging()``
+--skip-Gemini-pipeline     Skip the Gemini pipeline
+--skip-GPT-pipeline        Skip the GPT pipeline
 
-命令行用法示例:
-  python Run_complete_program.py                       # 默认运行全部流程
+Example usage:
+  python Run_complete_program.py                       # run everything
   python Run_complete_program.py --skip-Gemini-pipeline
   python Run_complete_program.py --skip-GPT-pipeline
   python Run_complete_program.py --skip-update-price-data
@@ -39,29 +40,29 @@ import re
 import html
 from datetime import datetime, timedelta
 
-# --- 配置日志记录 ---
+# --- Configure logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MainRunner] %(message)s')
 Gemini_dir = "Gemini"
 GPT_dir = "GPT"
 def change_working_directory(next_directory = ""):
     """
-    更改当前工作目录为脚本所在目录，或其下的 next_directory。
+    Change the current working directory to the script location or a subdirectory.
     """
-    # 获取当前脚本文件的绝对路径
+    # Get the absolute path of this script
     script_path = os.path.abspath(__file__)
-    # 获取脚本文件所在的目录
+    # Directory of the script
     script_dir = os.path.dirname(script_path)
-    # 切换当前工作目录到脚本所在的目录或其下的 next_directory
+    # Switch CWD to the script directory or its subdirectory
     if next_directory == "":
         os.chdir(script_dir)
-        logging.info(f"当前工作目录已更改为: {script_dir}")
+        logging.info(f"Current working directory changed to: {script_dir}")
     else:
         next_absolute_dir = os.path.join(script_dir, next_directory)
         os.chdir(next_absolute_dir)
-        logging.info(f"当前工作目录已更改为: {next_absolute_dir}")
-# --- 导入 Gemini 处理流程 ---
-GEMINI_AVAILABLE = False # 默认不可用
-#change_working_directory(Gemini_dir) # 切换到 Gemini 子目录
+        logging.info(f"Current working directory changed to: {next_absolute_dir}")
+# --- Import Gemini pipeline ---
+GEMINI_AVAILABLE = False # not available by default
+#change_working_directory(Gemini_dir) # switch into Gemini subdirectory
 try:
     # 优先尝试从 Gemini 子目录导入
     from Gemini.run_sp500_processing import main_pipeline as gemini_main_pipeline

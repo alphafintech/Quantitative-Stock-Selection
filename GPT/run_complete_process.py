@@ -1,33 +1,21 @@
 # -*- coding: utf-8 -*-
-"""orchestrator_select.py  (v2 — config‑driven)
-============================================================
-统一调度 S&P 500 趋势分与基本面分流水线, 并输出“优质成长股”榜单。
+"""Pipeline orchestrator (v2, config driven)
+============================================
+Coordinate the S&P 500 trend and fundamental pipelines and output the
+"high‑growth" stock list.
 
-主要变动
----------
-* **selection 参数全部可在 config_run.ini 里调节**；代码预设区段：
+Key changes
+-----------
+* All ``selection`` parameters are configurable via ``config_run.ini``.
+* ``composite_selection()`` reads defaults from that section if not
+  explicitly passed.
+* ``run_pipeline()`` loads the selection defaults with ``_load_sel_cfg``.
+* The CLI offers ``--cfg`` to specify a custom ``config_run`` file.
 
-```ini
-[selection]
-output_name   = composite_selection.xlsx  ; 导出文件名
-trend_thresh  = 70                         ; 趋势分过滤 ≥
-fund_thresh   = 70                         ; 基本面总分过滤 ≥
-growth_thresh = 80                         ; Growth‑sub 过滤 ≥
-w_core        = 0.8                        ; TF_core 权重
-w_growth      = 0.2                        ; Growth 加成权重
-```
-
-* `composite_selection()` 若未显式传参，将从该区段自动读取；缺失项回退到硬编码默认。
-* `run_pipeline()` 在执行前调用 `_load_sel_cfg()` 获取 selection 默认值。
-* CLI 增加 `--cfg` 选项指定自定义 config_run 文件。
-
-外部使用示例
+Example usage
 -------------
-```bash
-# 使用默认 config_run.ini
-python orchestrator_select.py
-
-# 指定另一个配置文件并仅做筛选
+```
+python orchestrator_select.py                # use default config_run.ini
 python orchestrator_select.py --cfg myrun.ini --no-recalc
 ```
 """
@@ -37,7 +25,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 # ------------------------------------------------------------
-# 目录 / 配置文件定位
+# Paths / config locations
 # ------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent
 CFG_RUN      = ROOT / "config_run.ini"
@@ -45,7 +33,7 @@ CFG_TREND    = ROOT / "config_trend.ini"
 CFG_FINANCE  = ROOT / "config_finance.ini"
 
 # ------------------------------------------------------------
-# 依赖脚本函数导入
+# Import dependent pipeline functions
 # ------------------------------------------------------------
 from .Compute_Trend_score_SP500_GPT import run_process_control as trend_run_ctrl
 from .compute_high_growth_score_SP500_GPT import (
@@ -63,7 +51,7 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("orchestrator")
 
 # ------------------------------------------------------------
-# 辅助：找出最新文件
+# Helper: find the newest file
 # ------------------------------------------------------------
 _DATE_RE = re.compile(r"(\d{8})")
 
@@ -75,21 +63,22 @@ def _latest_file(pattern: str) -> Optional[Path]:
     return files[0] if files else None
 
 # ------------------------------------------------------------
-# 读取 selection 配置
+# Read selection configuration
 # ------------------------------------------------------------
-# 除阈值/权重外，允许显式指定已生成的趋势 & 基本面 Excel
-# 若留空则回退到自动搜索逻辑。
+# Apart from thresholds/weights, explicit paths to the generated trend and
+# fundamental Excel files can be given; empty values fall back to automatic
+# search.
 #
 # [selection]
 # trend_file = trend_scores.xlsx
 # fund_file  = my_fundamental_scores.xlsx
-# ... 其余参数同前
+# ... rest of the parameters are the same
 # ------------------------------------------------------------
 _SEL_DEFAULTS: Dict[str, Any] = {
     "output_name"      : "composite_selection.xlsx",
-    "top_num_trend"    : 100,   # 取趋势分前 N 名
-    "top_num_growth"   : 70,    # 取基本面分前 M 名
-    "trend_file"       : "",    # 显式指定文件可留空
+    "top_num_trend"    : 100,   # take top N by trend score
+    "top_num_growth"   : 70,    # take top M by fundamental score
+    "trend_file"       : "",    # explicit file can be blank
     "fund_file"        : "",
     "trend_thresh"     : 70,
     "fund_thresh"      : 70,
@@ -121,7 +110,7 @@ def _load_sel_cfg(cfg_path: Path) -> Dict[str, Any]:
     return sel
 
 # ------------------------------------------------------------
-# 步骤封装
+# Step wrappers
 # ------------------------------------------------------------
 
 def build_trend_scores(run_stage) -> None:
@@ -147,18 +136,18 @@ def build_finance_scores(*, recalc_scores: bool) -> None:
 
 def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
     """
-    组合筛选（新规则）:
-        • 在 trend_scores.xlsx 排名前 *top_num_trend*
-        • 且在 high_growth_scoring.xlsx 排名前 *top_num_growth*
-      的股票交集。
+    Combine filtering using the new rules:
+        • Ranked within *top_num_trend* in ``trend_scores.xlsx``
+        • Ranked within *top_num_growth* in ``high_growth_scoring.xlsx``
+      The intersection of these stocks is retained.
 
-    输出列: ticker | trend_score | fund_score | final_score
-    final_score = (trend_score + fund_score) / 2
+    Output columns: ticker | trend_score | fund_score | final_score
+    where ``final_score = (trend_score + fund_score) / 2``.
     """
 
     import pandas as pd
 
-    # ---------- 1) 解析文件路径 ----------
+    # ---------- 1) Resolve file paths ----------
     def _resolve(name_key: str, fixed: str, pattern: str) -> Optional[Path]:
         cfg_path = cfg_sel.get(name_key, "").strip()
         if cfg_path and Path(cfg_path).exists():
@@ -177,7 +166,7 @@ def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
         log.error("[Select] Required Excel not found.")
         raise FileNotFoundError
 
-    # ---------- 2) Top‑N 读取 ----------
+    # ---------- 2) Read Top‑N ----------
     top_trend  = int(cfg_sel.get("top_num_trend", 100))
     top_growth = int(cfg_sel.get("top_num_growth", 70))
 
@@ -195,7 +184,7 @@ def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
           .rename(columns={"total_score":"fund_score"})
     )
 
-    # ---------- 3) 交集 ----------
+    # ---------- 3) Intersection ----------
     merged = trend_df.merge(fund_df, on="ticker", how="inner")
     if merged.empty:
         log.warning("[Select] No overlap between top Trend and top Growth lists.")
@@ -204,11 +193,11 @@ def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
         merged.to_excel(out_path, index=False)
         return out_path
 
-    # ---------- 4) 计算 final_score ----------
+    # ---------- 4) Calculate final_score ----------
     merged["final_score"] = ((merged["trend_score"] + merged["fund_score"]) / 2).round(1)
     merged = merged.sort_values("final_score", ascending=False)
 
-    # ---------- 5) 输出 ----------
+    # ---------- 5) Output ----------
     out_path = Path(cfg_sel["output_name"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
     merged[["ticker", "trend_score", "fund_score", "final_score"]].to_excel(out_path, index=False)
@@ -216,7 +205,7 @@ def composite_selection(cfg_sel: Dict[str, Any]) -> Path:
     return out_path
 
 # ------------------------------------------------------------
-# 主入口
+# Entry point
 # ------------------------------------------------------------
 
 def run_pipeline(*,
@@ -227,13 +216,13 @@ def run_pipeline(*,
     start = dt.datetime.now()
     log.info("========== PIPELINE START ==========")
 
-    # 1) 趋势分
+    # 1) Trend scores
     build_trend_scores(trend_run_stage)  # 0: run all stages
 
-    # 2) 基本面分
+    # 2) Fundamental scores
     build_finance_scores(recalc_scores=recalc_scores)
 
-    # 3) 组合筛选
+    # 3) Composite selection
     if do_selection:
         sel_cfg = _load_sel_cfg(cfg_run)
         composite_selection(sel_cfg)
@@ -245,9 +234,10 @@ def run_pipeline(*,
 # ------------------------------------------------------------
 
 def test_pipeline():
-    """Convenience wrapper: 使用当前 config_run.ini 只做评分 + 组合筛选。"""
+    """Convenience wrapper: run scoring and selection using the current
+    ``config_run.ini``."""
     run_pipeline(
-        recalc_scores=True,      # 重新计算趋势+基本面分
+        recalc_scores=True,      # recompute trend and fundamental scores
         do_selection=True,
         cfg_run=CFG_RUN)
 

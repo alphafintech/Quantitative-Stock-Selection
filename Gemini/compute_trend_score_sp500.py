@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-S&P 500 股票数据下载、指标计算与存储脚本。
+Script that downloads S&P 500 price data, calculates technical indicators and
+stores them in a database.
 
-该脚本提供以下功能：
-1. 从雅虎财经下载 S&P 500 成分股的最新历史股价和成交量数据 (增量更新)。
-2. 计算并存储各种技术指标 (移动平均线, MACD, RSI, 布林带, 随机指标, OBV, ADX, ROC, 52周高低)。
-3. 计算并存储最新的支撑/阻力位和超买/超卖状态。
-4. 所有参数通过 config.ini 文件配置。
-5. 可通过命令行参数独立运行数据更新或指标计算步骤。
-6. 计算基于可配置权重的趋势分数，将其归一化到 0-100，并保存到 Excel 文件。 # UPDATED
+Features:
+1. Incrementally download the latest historical prices and volumes from Yahoo
+   Finance.
+2. Compute a variety of technical indicators (moving averages, MACD, RSI,
+   Bollinger Bands, stochastic, OBV, ADX, ROC, 52‑week high/low).
+3. Store the latest support/resistance and overbought/oversold status.
+4. All parameters are configured via ``config.ini``.
+5. Data update and indicator calculation steps can be run independently via CLI.
+6. Compute weighted trend scores normalized to 0‑100 and save to Excel.
 
-依赖库: yfinance, pandas, pandas_ta, numpy, requests, beautifulsoup4, openpyxl
-需要安装: pip install yfinance pandas pandas_ta numpy requests beautifulsoup4 lxml openpyxl
+Dependencies: yfinance, pandas, pandas_ta, numpy, requests, beautifulsoup4,
+openpyxl. Install via ``pip install yfinance pandas pandas_ta numpy requests
+beautifulsoup4 lxml openpyxl``.
 """
 
 import argparse

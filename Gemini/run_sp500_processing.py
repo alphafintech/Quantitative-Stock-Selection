@@ -274,14 +274,14 @@ def run_trend_score_pipeline(config_file=CONFIG_FILE_TREND, do_calculate_indicat
             try:
                 os.remove(indicator_db)
             except PermissionError:
-                logging.error(f"无法删除数据库 {indicator_db}，文件可能被占用。")
+                logging.error(f"Could not delete database {indicator_db}; file may be in use.")
                 raise
         try:
             os.makedirs(os.path.dirname(indicator_db), exist_ok=True)
             shutil.copy2(price_db_path, indicator_db)
             logging.info(f"Copied price DB to indicator DB: {indicator_db}")
         except Exception as e:
-            logging.error(f"无法创建指标数据库 '{indicator_db}': {e}")
+            logging.error(f"Could not create indicator database '{indicator_db}': {e}")
             pipeline_successful = False
             return
 
