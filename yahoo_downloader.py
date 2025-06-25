@@ -212,7 +212,7 @@ def download_price_data(
                         df_single = df_all.get(tk)
                         if df_single is None or df_single.empty:
                             logger.warning("No data for ticker %s in downloaded batch.", tk)
-                            # 抛出异常让上层知道具体缺失的 ticker
+                            # raise so the caller knows which ticker is missing
                             raise RuntimeError(f"Price data missing for ticker {tk}")
                     else: 
                         df_single = df_all
@@ -268,7 +268,7 @@ def _fetch_fin_statements_yf(ticker: str) -> Dict[str, Any]:
     Fetch quarterly/annual income, balance-sheet, cash-flow plus last price & forward EPS
     using yfinance (same approach as download_profits.py/get_financial_data).
 
-    返回：
+    Returns:
         {
             "q_incs": pd.DataFrame, "a_incs": pd.DataFrame,
             "q_bals": pd.DataFrame, "a_bals": pd.DataFrame,
@@ -276,7 +276,8 @@ def _fetch_fin_statements_yf(ticker: str) -> Dict[str, Any]:
             "price": float | np.nan,
             "forward_eps": float | np.nan
         }
-    DataFrame 的索引已统一为 DatetimeIndex（report period 末日），列名保持原始。
+    The DataFrame indices are standardized to ``DatetimeIndex`` (end of report
+    period) and column names are left unchanged.
     """
     try:
         ytk = yf.Ticker(ticker)
@@ -463,8 +464,9 @@ def _save_single_ticker_data_to_stage(stage_conn: sqlite3.Connection, ticker: st
 # -----------------------------------------------------------------------------
 def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bool:
     """
-    使用 yfinance 获取财报数据并保存到原有 Staging DB。
-    保存逻辑、路径、表名与旧实现完全一致；唯一变化是 → 数据来源。
+    Use ``yfinance`` to fetch financial statements and store them in the existing
+    staging database. Save logic, paths and table names are unchanged – only the
+    data source differs.
     """
     logger.info("--- Phase 1 (yfinance): 开始获取并写入 Staging DB ---")
     cfg = _load_cfg(config_file)
@@ -477,17 +479,17 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
     raw_stage_db_path = _abs_path(raw_stage_db_path)
     Path(raw_stage_db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # 1) 读取 S&P500 列表
+    # 1) Load the S&P 500 list
     try:
         tickers = _get_sp500_tickers()
         if not tickers:
-            logger.error("未获取到 S&P500 列表，终止。")
+            logger.error("Failed to retrieve the S&P 500 list. Aborting.")
             return False
     except Exception as e:
-        logger.error("读取 S&P500 列表失败: %s", e)
+        logger.error("Failed reading S&P 500 list: %s", e)
         return False
 
-    # 2) 确保 staging 表存在
+    # 2) Ensure staging tables exist
     stage_table_map = {
         "q_incs": "stg_quarterly_income", "q_bals": "stg_quarterly_balance", "q_cfs": "stg_quarterly_cashflow",
         "a_incs": "stg_annual_income",   "a_bals": "stg_annual_balance",   "a_cfs": "stg_annual_cashflow",
@@ -498,16 +500,16 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
             for tbl in stage_table_map.values():
                 _ensure_raw_stage_table_exists(conn, tbl)
     except Exception as e:
-        logger.error("初始化 staging DB 失败: %s", e)
+        logger.error("Failed to initialise staging DB: %s", e)
         return False
 
-    # 3) 下载并保存（支持并发，可按需拆批）
+    # 3) Download and save (supports concurrency and batching)
     success = True
     for idx, tk in enumerate(tickers, 1):
-        logger.info("(%d/%d) 下载 %s 财报…", idx, len(tickers), tk)
+        logger.info("(%d/%d) Downloading financials for %s …", idx, len(tickers), tk)
         fin_data = _fetch_fin_statements_yf(tk)
         if not fin_data:
-            logger.warning("跳过 %s – 无数据", tk)
+            logger.warning("Skipping %s – no data", tk)
             success = False
             continue
 
@@ -527,7 +529,7 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
                 if not ok:
                     logger.info("%s latest quarter incomplete for %s – row dropped", key, tk)
 
-        # 写入 DB：沿用旧的工具函数
+        # Write into DB using the existing helper
         try:
             with sqlite3.connect(raw_stage_db_path) as conn:
                 for key, value in fin_data.items():
@@ -538,12 +540,12 @@ def acquire_raw_financial_data_to_staging(config_file: str = "config.ini") -> bo
             logger.error("写入 %s 财报到 staging 失败: %s", tk, e, exc_info=True)
             success = False
 
-        time.sleep(0.2)  # 轻微节流防封
+        time.sleep(0.2)  # small throttle to avoid bans
 
     if success:
-        logger.info("--- Phase 1 完成：全部数据写入成功 (%s) ---", raw_stage_db_path)
+        logger.info("--- Phase 1 complete: all data written successfully (%s) ---", raw_stage_db_path)
     else:
-        logger.warning("--- Phase 1 完成，但存在下载/写入错误，请检查日志 ---")
+        logger.warning("--- Phase 1 finished with some download/write errors; check logs ---")
     return success
 
 

@@ -4,15 +4,15 @@ import logging
 import os
 import configparser
 
-# 尝试导入 openpyxl，用于写入 Excel
+# Attempt to import openpyxl for Excel output
 try:
     import openpyxl
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
-    logging.warning("未找到 'openpyxl' 库。如果需要保存到 Excel，请运行: pip install openpyxl")
+    logging.warning("openpyxl not found. Run 'pip install openpyxl' if Excel output is needed")
 
-# 配置基本的日志记录
+# Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [GetData] %(message)s')
 
 
@@ -26,21 +26,22 @@ def get_stock_financials(ticker: str,
                          db_path: str = _get_finance_db(),
                          save_to_excel: bool = False):
     """
-    从指定的 SQLite 数据库获取单个股票的年度和季度财务数据，
-    并可选择将数据保存到与脚本同目录的 Excel 文件中。
+    Retrieve annual and quarterly financial data for a single stock from the
+    specified SQLite database and optionally save it to an Excel file in the
+    same directory as the script.
 
     Args:
-        ticker (str): 要查询的股票代码 (例如 'AAPL', 'MSFT').
-        db_path (str): SQLite 数据库文件的路径。
-                       默认为 'Gemini_finance_data.db'。
-        save_to_excel (bool): 如果为 True，则将获取的数据保存到 Excel 文件。
-                              默认为 False。
+        ticker (str): Stock symbol to query (e.g. ``"AAPL"``).
+        db_path (str): Path to the SQLite database file. Defaults to
+            ``"Gemini_finance_data.db"``.
+        save_to_excel (bool): If ``True`` save the retrieved data to an Excel
+            file. Defaults to ``False``.
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame] | tuple[None, None]:
-        包含两个 pandas DataFrame 的元组 (annual_data, quarterly_data)。
-        如果发生错误或找不到数据，则返回 (None, None)。
-        即使保存 Excel 失败，如果数据获取成功，仍会返回数据。
+        A tuple of two pandas DataFrames ``(annual_data, quarterly_data)``.
+        ``(None, None)`` is returned if an error occurs or no data is found.
+        The data is still returned even if saving to Excel fails.
     """
     conn = None
     annual_data = None

@@ -255,7 +255,7 @@ def get_sp500_tickers():
     # Adjust tickers: replace '.' with '-' for Yahoo Finance compatibility.
     tickers = [ticker.replace('.', '-') for ticker in tickers]
     print(f"Retrieved {len(tickers)} ticker symbols.")
-    tickers.append("SPY")   # 用于 RS 计算
+    tickers.append("SPY")   # used for Relative Strength calculation
     return tickers
 
 # ----------------- Data Insertion ----------------- #
@@ -1014,44 +1014,44 @@ def calculate_trend_indicators(db_path):
 
 
 
-# ----------------- 导出趋势分榜单 ----------------- #
-# ----------------- 导出趋势分榜单 ----------------- #
+# ----------------- Export Trend Score Ranking ----------------- #
+# ----------------- Export Trend Score Ranking ----------------- #
 def export_trend_excel(df: pd.DataFrame, out_path: str | None = None):
     """
-    导出趋势评分榜单到 Excel / CSV。
+    Export the trend score ranking to Excel or CSV.
 
-    选取顺序：
-    1. 显式传入 out_path                           → 优先。
-    2. config_trend.ini → [trend_score] → excel_file_name
-    3. 若两者皆无，则使用固定 'trend_scores.xlsx'
+    Selection order:
+    1. Explicit ``out_path`` argument has highest priority.
+    2. ``config_trend.ini`` → [trend_score] → ``excel_file_name``.
+    3. Otherwise fall back to ``trend_scores.xlsx``.
     """
     from pathlib import Path
     import configparser, logging
 
     logger = logging.getLogger("TrendExport")
 
-    # -- 读取配置 --
+    # -- Read configuration --
     cfg = configparser.ConfigParser()
     cfg.read(Path(__file__).with_name("config_trend.ini"), encoding="utf-8")
     cfg_out = None
     if cfg.has_section("trend_score") and cfg.has_option("trend_score", "excel_file_name"):
         cfg_out = cfg["trend_score"]["excel_file_name"].strip()
 
-    # -- 决定文件名 --
-    if out_path:           # ① 函数参数
+    # -- Determine output filename --
+    if out_path:           # ① function argument
         out_file = Path(out_path)
-    elif cfg_out:          # ② 配置文件
+    elif cfg_out:          # ② config file
         out_file = Path(cfg_out)
-    else:                  # ③ 默认
+    else:                  # ③ default
         out_file = Path("trend_scores.xlsx")
 
-    out_file.parent.mkdir(parents=True, exist_ok=True)   # 确保目录存在
+    out_file.parent.mkdir(parents=True, exist_ok=True)   # ensure directory exists
 
-    # -- 导出 --
+    # -- Export --
     try:
         df.sort_values("TotalScore", ascending=False).to_excel(out_file, index=False)
         logger.info("[TrendScore] Exported → %s", out_file)
-    except Exception as e:                    # Excel 写失败则回退 CSV
+    except Exception as e:                    # if Excel fails, fall back to CSV
         alt = out_file.with_suffix(".csv")
         df.to_csv(alt, index=False)
         logger.warning("[TrendScore] Excel failed (%s) – wrote CSV %s", e, alt)

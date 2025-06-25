@@ -5,7 +5,7 @@ import sqlite3
 import configparser
 import requests
 from bs4 import BeautifulSoup
-import time # <--- 确认 time 模块已导入
+import time  # ensure time module is imported
 import logging
 from datetime import datetime, timedelta
 from scipy.stats import linregress
@@ -14,7 +14,7 @@ import shutil
 import json
 import warnings
 import sys
-from pathlib import Path # 如果尚未导入，请添加
+from pathlib import Path  # add if not already imported
 
 # --- Attempt to import the migration function ---
 # finance_db_migrate.py resides in the same Gemini package
@@ -276,30 +276,30 @@ warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning, mes
 from pathlib import Path
 CONFIG_FILE = Path(__file__).with_name("config_finance.ini")
 
-LOG_FORMAT = '%(asctime)s - %(levelname)s - [Growth] %(message)s' # 日志格式，添加模块前缀
+LOG_FORMAT = '%(asctime)s - %(levelname)s - [Growth] %(message)s'  # log format with module prefix
 
 # --- Logging Setup Function ---
 def setup_logging(log_level_str='INFO', log_to_file=False, log_filename_base='growth_score_run'):
     """
-    设置日志记录，输出到控制台和/或文件。
+    Configure logging to console and/or file.
 
     Args:
-        log_level_str (str): 日志级别 ('DEBUG', 'INFO', etc.).
-        log_to_file (bool): 是否记录到文件.
-        log_filename_base (str): 日志文件基础名.
+        log_level_str (str): Logging level ('DEBUG', 'INFO', etc.).
+        log_to_file (bool): Whether to also log to a file.
+        log_filename_base (str): Base name for the log file.
     """
     level = getattr(logging, log_level_str.upper(), logging.INFO)
-    logger = logging.getLogger() # 获取根 logger
-    # 清除之前的处理器（如果存在），防止重复记录
+    logger = logging.getLogger()  # obtain root logger
+    # Remove any existing handlers to avoid duplicate logs
     if logger.hasHandlers():
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
-            handler.close() # 关闭处理器
+            handler.close()  # close handler
 
-    logger.setLevel(level) # 在根 logger 上设置级别
+    logger.setLevel(level)  # set level on root logger
     formatter = logging.Formatter(LOG_FORMAT)
 
-    # 控制台处理器
+    # Console handler
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(level)
     ch.setFormatter(formatter)
@@ -307,17 +307,17 @@ def setup_logging(log_level_str='INFO', log_to_file=False, log_filename_base='gr
 
     log_message_parts = [f"Logging initialized. Level: {log_level_str}.", "Outputting to Console"]
 
-    # 文件处理器 (可选)
+    # File handler (optional)
     if log_to_file:
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             log_file = f"{log_filename_base}_{timestamp}.log"
-            # 获取脚本目录，如果失败则使用当前工作目录
+            # Determine script directory; fall back to CWD if unavailable
             try:
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-            except NameError: # __file__ 未定义 (例如在交互模式下)
+            except NameError:  # __file__ undefined (e.g. interactive mode)
                 script_dir = os.getcwd()
-            # 将日志文件放入 'logs' 子目录
+            # Place log files in a 'logs' subdirectory
             log_dir = os.path.join(script_dir, "logs")
             if not os.path.exists(log_dir):
                  os.makedirs(log_dir)
@@ -329,7 +329,7 @@ def setup_logging(log_level_str='INFO', log_to_file=False, log_filename_base='gr
             logger.addHandler(fh)
             log_message_parts.append(f"and File: {log_file_path}")
         except Exception as e:
-            # 如果文件日志设置失败，仅通过控制台记录错误
+            # If file logging setup fails, log the error only to console
             ch.handle(logging.LogRecord(
                 name='root', level=logging.ERROR, pathname='', lineno=0,
                 msg=f"Failed to set up file logging handler to '{log_file_path}': {e}",
@@ -342,18 +342,18 @@ def setup_logging(log_level_str='INFO', log_to_file=False, log_filename_base='gr
 
 # --- Configuration Loading Function ---
 def load_config(filename=CONFIG_FILE):
-    """从 INI 文件加载配置并返回包含类型化值的字典。"""
+    """Load configuration from INI file and return typed values."""
     if not os.path.exists(filename):
         raise FileNotFoundError(f"Configuration file '{filename}' not found.")
 
-    config = configparser.ConfigParser(interpolation=None) # interpolation=None 防止 % 问题
-    config.read(filename, encoding='utf-8') # 指定编码
+    config = configparser.ConfigParser(interpolation=None)  # interpolation=None avoids '%' issues
+    config.read(filename, encoding='utf-8')  # explicit encoding
     logging.info(f"Configuration loaded from {filename}")
 
     typed_config = {}
-    # 定义预期的节、键及其类型
+    # Define expected sections, keys and their types
     expected_types = {
-        'General': {'sp500_list_url': str, 'output_excel_file': str, 'log_level': str, 'log_to_file': bool}, # 添加 log_to_file
+        'General': {'sp500_list_url': str, 'output_excel_file': str, 'log_level': str, 'log_to_file': bool},  # includes log_to_file
         'Data': {'db_name': str, 'years_of_annual_data': int, 'incremental_download': bool, 'download_delay': float},
         'Screening': {'enable_screening': bool, 'max_debt_to_equity': float, 'min_interest_coverage': float},
         'Scoring_Weights': {'w_cagr': float, 'w_accel': float, 'w_growth_rev': float, 'w_growth_eps': float, 'w_profitability': float, 'w_efficiency': float, 'w_fcf': float,'w_eps_turnaround': float},
@@ -361,16 +361,16 @@ def load_config(filename=CONFIG_FILE):
         'Methodology': {'ranking_method': str}
     }
 
-    # 遍历预期的配置结构
+    # Walk through the expected config structure
     for section, keys_types in expected_types.items():
         if section not in config:
-            # 处理可能缺失的可选节
+            # Handle optional sections if missing
             if section == 'Methodology':
                  logging.warning(f"Config section [{section}] not found. Using default methodology.")
-                 typed_config[section] = {'ranking_method': 'overall'} # 提供默认值
+                 typed_config[section] = {'ranking_method': 'overall'}  # provide default
                  continue
-            elif section == 'General' and 'log_to_file' in keys_types: # 特别处理 log_to_file
-                 typed_config.setdefault('General', {})['log_to_file'] = False # 如果 General 节存在但键缺失，则默认为 False
+            elif section == 'General' and 'log_to_file' in keys_types:  # special case for log_to_file
+                 typed_config.setdefault('General', {})['log_to_file'] = False  # default False when missing
                  logging.warning("Config key 'log_to_file' not found in [General]. Defaulting to False.")
                  continue
             else:
