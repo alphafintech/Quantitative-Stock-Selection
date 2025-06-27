@@ -7,14 +7,19 @@ Database locations are defined in `config.ini` under the `[database]` section:
 
 ```
 [database]
-price_db = SP500_price_data.db
-finance_db = SP500_finance_data.db
+price_db      = SP500_price_data.db
+finance_db    = Gemini/SP500_finance_data_Gemini.db
+gpt_price_db  = GPT/SP500_price_data_GPT.db
 GPT_finance_db = GPT/SP500_finance_data_GPT.db
+raw_stage_db  = SP500_raw_finance.db
 ```
-Both paths are relative to the project root unless absolute paths are provided.
+All paths are relative to the project root unless absolute paths are provided.
 Scripts that download or process data will automatically use these settings.
 
-All configuration files and helper scripts expect the finance database to be named `SP500_finance_data.db`.
+Helper scripts assume the Gemini finance database is named `SP500_finance_data_Gemini.db`.
+
+Refer to `docs/configuration_reference.md` for a detailed explanation of every
+configuration parameter used across the project.
 
 ### Initializing the databases
 
@@ -93,6 +98,16 @@ After each run the utility exports the screening results to HTML with `export_ge
 ### Portfolio performance helper
 
 `portfolio_yield.py` reads `Portfolio/portfolio_performance.xlsx`, calculates cumulative returns for Gemini, ChatGPT and the S&P 500 and saves an updated Excel file and comparison chart in `result_output/`.
+
+### Portfolio rebalancing
+
+`post_process.py` automates portfolio adjustments. It reads the current holdings
+files (`Portfolio/GPT_current_holdings.xlsx` and
+`Portfolio/Gemini_current_holdings.xlsx`), applies target weights from the
+corresponding `*_portfolio_adjustment.txt` files and writes an HTML report with
+the proposed trades to `result_output/`. Run it directly or via the helper
+
+`scripts/run_post_process.bat` script on Windows.
 
 ### Running tests
 
